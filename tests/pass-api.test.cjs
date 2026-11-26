@@ -59,12 +59,10 @@ function fixture(options = {}) {
       }
     },
     Utilities: {
-      formatDate(date, zone, pattern) {
+      formatDate: (date, zone, format) => {
         assert.equal(zone, 'Europe/Moscow');
-        const local = new Date(date.getTime() + 3 * 3600000).toISOString();
-        if (pattern === 'yyyy-MM-dd') return local.slice(0, 10);
-        if (pattern === 'HH:mm') return local.slice(11, 16);
-        return local.slice(0, 19) + '+03:00';
+        const value = new Date(date.getTime() + 3 * 3600000).toISOString();
+        return format === 'yyyy-MM-dd' ? value.slice(0, 10) : format === 'HH:mm' ? value.slice(11, 16) : value.slice(0, 19) + '+03:00';
       }
     },
     LockService: {
@@ -172,65 +170,75 @@ test('reordered columns are mapped by name', () => {
   assert.deepEqual(JSON.parse(api.rows[1][reversed.indexOf('qrPayload')]), example);
 });
 
-
 function readPasses(api, studentId = 1, className = '9А') {
   return api.request({ action: 'studentPasses', studentId, className });
 }
-
-test('student receives the created pass with the unchanged stored QR string', () => {
+test('studentPasses is read-only and initially empty', () => {
   const api = fixture();
   assert.deepEqual(readPasses(api), { ok: true, passes: [] });
-  create(api);
-  // Existing spreadsheet rows may store formatted JSON, which must remain exact.
-  const qrPayload = JSON.stringify(example, null, 2);
-  api.rows[1][headers.indexOf('qrPayload')] = qrPayload;
-  const result = readPasses(api);
-  assert.equal(result.ok, true);
-  assert.deepEqual(result.passes, [{
-    ...example, qrPayload, exitDate: '2026-11-27', exitTime: '14:30'
-  }]);
+  assert.equal(api.rows.length, 1);
+  assert.equal(api.releases, 0);
 });
-
-test('student read matches both ID and class and excludes foreign corrupted rows', () => {
+test('a new teacher pass appears with the exact stored UTF-8 payload and original ID', () => {
+  const api = fixture();
+  assert.equal(readPasses(api).passes.length, 0);
+  create(api);
+  // Preserve whitespace and Cyrillic byte-for-byte; never reserialize a QR.
+  const payload = JSON.stringify(example, null, 2);
+  api.rows[1][headers.indexOf('qrPayload')] = payload;
+  assert.deepEqual(readPasses(api), { ok: true, passes: [{ ...example, qrPayload: payload,
+    exitDate: '2026-11-27', exitTime: '14:30' }] });
+  assert.equal(api.rows.length, 2);
+  assert.equal(api.releases, 1);
+});
+test('ID AND class are required, never disclose another student pass', () => {
+  const api = fixture();
+  create(api);
+  create(api, { ...example, id: '8eeb7b42-0ef3-4ee5-bcbd-167ab1b144f3', studentId: 2, studentName: 'Васильева София' });
+  assert.equal(readPasses(api).passes.length, 1);
+  assert.equal(readPasses(api).passes[0].studentId, 1);
+  assert.equal(readPasses(api, 2).passes[0].studentId, 2);
+  for (const [id, name] of [[1, '9Ц'], ['1', '9А'], [999, '9А'], [1, '']]) {
+    const result = readPasses(api, id, name);
+    assert.equal(result.ok, false);
+    assert.equal(result.passes, undefined);
+  }
+});
+test('foreign and empty rows are ignored before parsing their payload', () => {
   const api = fixture();
   create(api);
   const foreign = [...api.rows[1]];
-  foreign[headers.indexOf('studentId')] = 2;
-  foreign[headers.indexOf('qrPayload')] = 'corrupted foreign QR';
-  api.rows.push(foreign);
-  const wrongClass = [...api.rows[1]];
-  wrongClass[headers.indexOf('className')] = '9Ц';
-  wrongClass[headers.indexOf('qrPayload')] = 'corrupted foreign class QR';
-  api.rows.push(wrongClass);
+  foreign[headers.indexOf('studentId')] = 999;
+  foreign[headers.indexOf('qrPayload')] = 'invalid';
+  api.rows.push(foreign, Array(headers.length).fill(''));
   assert.equal(readPasses(api).passes.length, 1);
-  assert.equal(readPasses(api, 1, '9Ц').ok, false);
-  assert.equal(readPasses(api, '1').ok, false);
-  assert.equal(readPasses(api, 999).ok, false);
 });
-
-test('student receives newest departures first and no records for another student', () => {
-  const api = fixture();
+test('a substituted QR identity or ID fails closed without returning data', () => {
+  for (const change of [{ studentId: 2 }, { className: '9Ц' }, { id: 'another-id' }]) {
+    const api = fixture(); create(api);
+    api.rows[1][headers.indexOf('qrPayload')] = JSON.stringify({ ...example, ...change });
+    const result = readPasses(api);
+    assert.equal(result.ok, false);
+    assert.equal(result.passes, undefined);
+  }
+});
+test('reading reordered columns preserves IDs and orders latest exit first', () => {
+  const api = fixture({ headers: [...headers].reverse() });
   create(api);
-  const newer = {
-    ...example, id: 'd4f0378c-8f03-46f5-8e8c-68d74e61db3b',
-    exitAt: '2026-11-28T09:05:00+03:00'
-  };
-  create(api, newer);
+  const next = { ...example, id: '8eeb7b42-0ef3-4ee5-bcbd-167ab1b144f3', exitAt: '2026-11-28T09:15:00+03:00' };
+  create(api, next);
   const result = readPasses(api);
-  assert.deepEqual(result.passes.map(pass => pass.id), [newer.id, example.id]);
-  assert.equal(result.passes[0].exitDate, '2026-11-28');
-  assert.equal(result.passes[0].exitTime, '09:05');
-  assert.deepEqual(readPasses(api, 2).passes, []);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.passes.map(pass => pass.id), [next.id, example.id]);
+  assert.equal(result.passes[0].exitTime, '09:15');
 });
 
-test('malformed and mismatched QR data for the selected pupil cause explicit errors', () => {
+test('malformed QR data for the selected student produces an explicit error', () => {
   const api = fixture();
   create(api);
-  const column = headers.indexOf('qrPayload');
-  api.rows[1][column] = '{bad';
-  assert.equal(readPasses(api).ok, false);
-  api.rows[1][column] = JSON.stringify({ ...example, studentId: 2 });
-  assert.equal(readPasses(api).ok, false);
-  api.rows[1][column] = JSON.stringify({ ...example, id: 'substituted' });
-  assert.equal(readPasses(api).ok, false);
+  api.rows[1][headers.indexOf('qrPayload')] = '{bad';
+  const result = readPasses(api);
+  assert.equal(result.ok, false);
+  assert.match(result.error, /Повреждён/);
+  assert.equal(result.passes, undefined);
 });
