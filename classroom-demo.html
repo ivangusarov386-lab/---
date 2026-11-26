@@ -8,7 +8,7 @@
 body {
   background: radial-gradient(ellipse at top, #e3edf8, #f6f8fc 640px);
 }
-.masthead, .section-nav {
+.masthead, .navigation-panel {
   width: min(1210px, calc(100% - 32px));
   margin-inline: auto;
 }
@@ -118,6 +118,39 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .section-nav .nav-tile { transition: none; }
 }
+
+.navigation-panel { margin-top: 20px; }
+.navigation-panel > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 54px;
+  padding: 14px 18px;
+  border: 1px solid #c5d4e5;
+  border-radius: 16px;
+  color: var(--ink);
+  background: linear-gradient(155deg, #fff, var(--surface));
+  box-shadow: inset 0 1px 0 #fff, 0 4px 0 #b6c8df, 0 8px 13px #193f6c20;
+  font-size: 17px;
+  font-weight: 650;
+  cursor: pointer;
+  list-style: none;
+}
+.navigation-panel > summary::-webkit-details-marker { display: none; }
+.navigation-panel > summary::after {
+  content: '';
+  width: 9px;
+  height: 9px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(45deg);
+}
+.navigation-panel[open] > summary::after { transform: rotate(225deg); }
+.navigation-panel > summary:focus-visible {
+  outline: 3px solid #27609c;
+  outline-offset: 3px;
+}
+.navigation-panel .section-nav { width: 100%; margin-top: 18px; }
 </style>
 <header class="masthead">
   <strong class="masthead-title">
@@ -127,7 +160,10 @@ body {
   <p>Кабинет классного руководителя · демо</p>
   <div class="masthead-meta"><b>9А класс</b><time datetime="2026-11-26">26 ноября 2026</time></div>
 </header>
-<nav id="nav" class="section-nav" aria-label="Разделы кабинета"></nav>
+<details id="navigation-panel" class="navigation-panel">
+  <summary>Панель</summary>
+  <nav id="nav" class="section-nav" aria-label="Разделы кабинета"></nav>
+</details>
 <main id="main"></main><footer>Автономный прототип с вымышленными данными. Нет подключения к МЭШ, СКУД или ГТО. Изменения хранятся только до перезагрузки страницы.</footer><script>
 const first=['Артём','София','Максим','Анна','Михаил','Мария','Даниил','Алиса','Илья','Полина','Кирилл','Ева','Алексей','Дарья','Роман','Виктория','Никита','Ксения','Егор','Валерия','Матвей','Елизавета','Павел','Арина','Андрей'];const last=['Александров','Васильев','Дмитриев','Иванов','Козлов','Морозов','Петров','Соколов','Орлов','Лебедев','Волков','Смирнов','Новиков','Фёдоров','Попов','Семёнов','Кузнецов','Белов','Зайцев','Павлов','Сидоров','Голубев','Виноградов','Михайлов','Борисов'];const subjects=['Русский язык','Литература','Алгебра','Геометрия','История','Английский язык','Физика','Химия','Биология','Физкультура'];const P=first.map((n,i)=>{const missed=(i*7)%23, sick=Math.floor(missed*(i%5)/5);
 let remainingSick=sick;
@@ -144,7 +180,10 @@ const grades=subjects.map((s,j)=>{
 });
 const entry=i===6||i===19?'—':`08:${String(3+(i*7)%46).padStart(2,'0')}`;return {id:i,name:last[i]+(i%2?'а':'')+' '+n,sex:i%2?'Ж':'М',grades,avg:grades.flatMap(x=>x.g).reduce((a,b)=>a+b,0)/50,missed,sick,entry,exit:entry==='—'?'—':`15:${String(10+i%35).padStart(2,'0')}`,gtoRegistered:i%5>1,gtoDate:i%5>1?'2026-11-20':'',gtoArrived:i%5>2,social:i%7===0?'Требует обновления':'Актуален',family:i%6===0?'Один законный представитель':'Два законных представителя',support:i%8===0?'Предусмотрена школьная поддержка':'Не указана',note:''}});let events=[{date:'2026-11-27',time:'09:00',type:'ГТО',title:'Приём нормативов',place:'Спортивный зал'},{date:'2026-11-30',time:'18:00',type:'Родители',title:'Родительское собрание',place:'Кабинет 305'},{date:'2026-12-03',time:'10:00',type:'Учёба',title:'Диагностическая работа',place:'Кабинет 210'}];let tasks=[{title:'Актуализировать социальные паспорта',done:false},{title:'Уточнить регистрацию ГТО',done:false}];let page='home',pid=0,tab='digital',q='',filter='all',month=10,year=2026,date='2026-11-27';const labels={home:'Рабочий стол',students:'Мой класс',social:'Социальные паспорта',digital:'Цифровые паспорта',gto:'ГТО',calendar:'Календарь',tasks:'Задачи',reports:'Аналитика'};const $=id=>document.getElementById(id),esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),sum=f=>P.reduce((a,p)=>a+f(p),0),registered=()=>P.filter(p=>p.gtoRegistered).length,metric=(v,t)=>`<div class="card"><span class="muted">${t}</span><b class="metric">${v}</b></div>`,card=(t,b)=>`<section class="card"><h2>${t}</h2>${b}</section>`,table=(heads,rows)=>`<div class="scroll"><table><thead><tr>${heads.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`,row=(cells,id)=>`<tr ${id===undefined?'':`data-id="${id}"`}>${cells.map(c=>`<td>${c}</td>`).join('')}</tr>`,status=(s,c)=>`<span class="${c}">${esc(s)}</span>`,link=(p)=>`<button onclick="openP(${p.id})">${p.name}</button>`,go=(k, fromNav=false)=>{
   page=k;q='';filter='all';render();
-  if(fromNav) $('section-title').focus({preventScroll:true});
+  if(fromNav) {
+    $('navigation-panel').open=false;
+    $('section-title').focus({preventScroll:true});
+  }
 },openP=i=>{pid=i;tab=['social','gto'].includes(page)?page:'digital';page='profile';render()},pct=(n,d)=>Math.round(n/d*100),bar=n=>`<div class="bar"><i style="width:${n}%"></i></div>`;
 const navTiles = {
   home: ['Главная', '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>'],
