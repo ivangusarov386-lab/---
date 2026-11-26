@@ -151,6 +151,31 @@ body {
   outline-offset: 3px;
 }
 .navigation-panel .section-nav { width: 100%; margin-top: 18px; }
+
+.pass-list table { white-space: normal; }
+.pass-list td:last-child { width: 160px; }
+.pass-list button { min-height: 44px; }
+.pass-dialog {
+  width: min(440px, calc(100% - 24px));
+  max-height: calc(100dvh - 32px);
+  overflow: auto;
+  padding: 24px;
+  border: 1px solid #c5d4e5;
+  border-radius: 22px;
+  color: var(--ink);
+  background: linear-gradient(145deg, #fff, #edf3fb);
+  box-shadow: inset 0 1px 0 white, 0 8px 0 #9cb0ca, 0 24px 70px #14294155;
+}
+.pass-dialog::backdrop { background: #14294188; }
+.pass-dialog h2 { margin: 0; }
+.pass-dialog form label { margin: 16px 0; }
+.pass-dialog input { display: block; width: 100%; min-width: 0; margin-top: 6px; }
+.pass-dialog button { min-height: 44px; }
+.pass-dialog .dialog-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 20px; }
+.pass-qr { margin: 18px auto; max-width: 300px; background: white; }
+.pass-qr svg { display: block; width: 100%; height: auto; }
+.pass-date { font-size: 20px; font-weight: 700; }
+.pass-error { color: #a73535; }
 </style>
 <header class="masthead">
   <strong class="masthead-title">
@@ -164,7 +189,29 @@ body {
   <summary>Панель</summary>
   <nav id="nav" class="section-nav" aria-label="Разделы кабинета"></nav>
 </details>
-<main id="main"></main><footer>Автономный прототип с вымышленными данными. Нет подключения к МЭШ, СКУД или ГТО. Изменения хранятся только до перезагрузки страницы.</footer><script>
+<main id="main"></main>
+<dialog id="exit-pass-dialog" class="pass-dialog" aria-labelledby="exit-pass-title">
+  <h2 id="exit-pass-title">Выдать пропуск</h2>
+  <p id="exit-pass-student"></p>
+  <form id="exit-pass-form" onsubmit="createExitPass(event)">
+    <label>Дата выхода <input name="exitDate" type="date" required></label>
+    <label>Время выхода (Москва) <input name="exitTime" type="time" required></label>
+    <p id="exit-pass-error" class="pass-error" role="alert" hidden></p>
+    <div class="dialog-actions">
+      <button class="primary" type="submit">Создать</button>
+      <button type="button" onclick="$('exit-pass-dialog').close()">Отмена</button>
+    </div>
+  </form>
+  <section id="exit-pass-result" hidden aria-label="Созданный пропуск">
+    <div id="exit-pass-qr" class="pass-qr"></div>
+    <p id="exit-pass-departure" class="pass-date"></p>
+    <div class="dialog-actions">
+      <button type="button" onclick="$('exit-pass-dialog').close()">Закрыть</button>
+    </div>
+  </section>
+</dialog>
+<script src="vendor/qrcode-generator-2.0.4.js"></script>
+<footer>Автономный прототип с вымышленными данными. Нет подключения к МЭШ, СКУД или ГТО. Изменения хранятся только до перезагрузки страницы.</footer><script>
 const first=['Артём','София','Максим','Анна','Михаил','Мария','Даниил','Алиса','Илья','Полина','Кирилл','Ева','Алексей','Дарья','Роман','Виктория','Никита','Ксения','Егор','Валерия','Матвей','Елизавета','Павел','Арина','Андрей'];const last=['Александров','Васильев','Дмитриев','Иванов','Козлов','Морозов','Петров','Соколов','Орлов','Лебедев','Волков','Смирнов','Новиков','Фёдоров','Попов','Семёнов','Кузнецов','Белов','Зайцев','Павлов','Сидоров','Голубев','Виноградов','Михайлов','Борисов'];const subjects=['Русский язык','Литература','Алгебра','Геометрия','История','Английский язык','Физика','Химия','Биология','Физкультура'];const P=first.map((n,i)=>{const missed=(i*7)%23, sick=Math.floor(missed*(i%5)/5);
 let remainingSick=sick;
 const grades=subjects.map((s,j)=>{
@@ -178,7 +225,7 @@ const grades=subjects.map((s,j)=>{
     sick:subjectSick
   };
 });
-const entry=i===6||i===19?'—':`08:${String(3+(i*7)%46).padStart(2,'0')}`;return {id:i,name:last[i]+(i%2?'а':'')+' '+n,sex:i%2?'Ж':'М',grades,avg:grades.flatMap(x=>x.g).reduce((a,b)=>a+b,0)/50,missed,sick,entry,exit:entry==='—'?'—':`15:${String(10+i%35).padStart(2,'0')}`,gtoRegistered:i%5>1,gtoDate:i%5>1?'2026-11-20':'',gtoArrived:i%5>2,social:i%7===0?'Требует обновления':'Актуален',family:i%6===0?'Один законный представитель':'Два законных представителя',support:i%8===0?'Предусмотрена школьная поддержка':'Не указана',note:''}});let events=[{date:'2026-11-27',time:'09:00',type:'ГТО',title:'Приём нормативов',place:'Спортивный зал'},{date:'2026-11-30',time:'18:00',type:'Родители',title:'Родительское собрание',place:'Кабинет 305'},{date:'2026-12-03',time:'10:00',type:'Учёба',title:'Диагностическая работа',place:'Кабинет 210'}];let tasks=[{title:'Актуализировать социальные паспорта',done:false},{title:'Уточнить регистрацию ГТО',done:false}];let page='home',pid=0,tab='digital',q='',filter='all',month=10,year=2026,date='2026-11-27';const labels={home:'Рабочий стол',students:'Мой класс',social:'Социальные паспорта',digital:'Цифровые паспорта',gto:'ГТО',calendar:'Календарь',tasks:'Задачи',reports:'Аналитика'};const $=id=>document.getElementById(id),esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),sum=f=>P.reduce((a,p)=>a+f(p),0),registered=()=>P.filter(p=>p.gtoRegistered).length,metric=(v,t)=>`<div class="card"><span class="muted">${t}</span><b class="metric">${v}</b></div>`,card=(t,b)=>`<section class="card"><h2>${t}</h2>${b}</section>`,table=(heads,rows)=>`<div class="scroll"><table><thead><tr>${heads.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`,row=(cells,id)=>`<tr ${id===undefined?'':`data-id="${id}"`}>${cells.map(c=>`<td>${c}</td>`).join('')}</tr>`,status=(s,c)=>`<span class="${c}">${esc(s)}</span>`,link=(p)=>`<button onclick="openP(${p.id})">${p.name}</button>`,go=(k, fromNav=false)=>{
+const entry=i===6||i===19?'—':`08:${String(3+(i*7)%46).padStart(2,'0')}`;return {id:i,name:last[i]+(i%2?'а':'')+' '+n,sex:i%2?'Ж':'М',grades,avg:grades.flatMap(x=>x.g).reduce((a,b)=>a+b,0)/50,missed,sick,entry,exit:entry==='—'?'—':`15:${String(10+i%35).padStart(2,'0')}`,gtoRegistered:i%5>1,gtoDate:i%5>1?'2026-11-20':'',gtoArrived:i%5>2,social:i%7===0?'Требует обновления':'Актуален',family:i%6===0?'Один законный представитель':'Два законных представителя',support:i%8===0?'Предусмотрена школьная поддержка':'Не указана',note:''}});let events=[{date:'2026-11-27',time:'09:00',type:'ГТО',title:'Приём нормативов',place:'Спортивный зал'},{date:'2026-11-30',time:'18:00',type:'Родители',title:'Родительское собрание',place:'Кабинет 305'},{date:'2026-12-03',time:'10:00',type:'Учёба',title:'Диагностическая работа',place:'Кабинет 210'}];let tasks=[{title:'Актуализировать социальные паспорта',done:false},{title:'Уточнить регистрацию ГТО',done:false}];let page='home',pid=0,tab='digital',q='',filter='all',month=10,year=2026,date='2026-11-27';const labels={home:'Рабочий стол',students:'Мой класс',social:'Социальные паспорта',digital:'Цифровые паспорта',gto:'ГТО',calendar:'Календарь',tasks:'Задачи',reports:'Аналитика',passes:'Пропуск'};const $=id=>document.getElementById(id),esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),sum=f=>P.reduce((a,p)=>a+f(p),0),registered=()=>P.filter(p=>p.gtoRegistered).length,metric=(v,t)=>`<div class="card"><span class="muted">${t}</span><b class="metric">${v}</b></div>`,card=(t,b)=>`<section class="card"><h2>${t}</h2>${b}</section>`,table=(heads,rows)=>`<div class="scroll"><table><thead><tr>${heads.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`,row=(cells,id)=>`<tr ${id===undefined?'':`data-id="${id}"`}>${cells.map(c=>`<td>${c}</td>`).join('')}</tr>`,status=(s,c)=>`<span class="${c}">${esc(s)}</span>`,link=(p)=>`<button onclick="openP(${p.id})">${p.name}</button>`,go=(k, fromNav=false)=>{
   page=k;q='';filter='all';render();
   if(fromNav) {
     $('navigation-panel').open=false;
@@ -193,6 +240,7 @@ const navTiles = {
   gto: ['ГТО', '<path d="M7 4h10v6a5 5 0 0 1-10 0V4Zm0 2H3v2a4 4 0 0 0 4 4m10-6h4v2a4 4 0 0 1-4 4m-5 3v4m-4 1h8"/>'],
   calendar: ['Календарь', '<rect x="3" y="5" width="18" height="16" rx="3"/><path d="M7 3v4m10-4v4M3 10h18m-13 4h1m3 0h1m3 0h1m-9 3h1m3 0h1"/>'],
   tasks: ['Задачи', '<rect x="4" y="3" width="16" height="18" rx="3"/><path d="m7 9 1 1 2-2m3 1h4m-10 6 1 1 2-2m3 1h4"/>'],
+  passes: ['Пропуск', '<path d="M14 4H4v16h10M10 12h11m-4-4 4 4-4 4"/>'],
   reports: ['Аналитика', '<path d="M3 3v18h18M7 17v-4m5 4V9m5 8V5"/>']
 };
 function renderNavigation() {
@@ -229,7 +277,78 @@ function setGtoDate(input) {
   }
   P[pid].gtoDate=input.value;
 }
-function render(){ renderNavigation();let b=`<h1 id="section-title" tabindex="-1">${labels[page]||'Карточка ученика'}</h1>`;if(page==='home'){b+=`<div class="grid">${metric(P.length,'Учеников')}${metric(P.filter(p=>p.entry!=='—').length,'Вход зафиксирован сегодня')}${metric((sum(p=>p.avg)/25).toFixed(2),'Средний балл')}${metric(sum(p=>p.missed),'Пропущено уроков')}${metric(sum(p=>p.sick),'Н по болезни')}</div>`;b+=gtoOverview()+card('Требуют проверки',table(['Событие','Ученик','Действие'],P.filter(p=>p.entry==='—').map(p=>row(['Нет отметки входа',link(p),'Сверить с журналом']))));b+=card('Ближайшие мероприятия',eventList(events.filter(e=>e.date>='2026-11-26')))+card('Рабочие задачи',tasks.map(t=>`<p>${t.done?'✓':'○'} ${esc(t.title)}</p>`).join('')+'<button onclick="go(\'tasks\')">Открыть задачи</button>')}else if(['students','social','digital','gto'].includes(page)){if(page==='gto')b+=gtoOverview();b+=`<div class="tools"><input id="q" placeholder="Поиск по ФИО" value="${esc(q)}" oninput="q=this.value;render();document.getElementById('q').focus()"><select onchange="filter=this.value;render()">${[['all','Все ученики'],['sick','Есть Н по болезни'],['entry','Нет входа'],['gto','ГТО — нет регистрации'],['social','Паспорт требует обновления']].map(([k,v])=>`<option value="${k}" ${filter===k?'selected':''}>${v}</option>`).join('')}</select></div>`;let ps=P.filter(p=>p.name.toLowerCase().includes(q.toLowerCase())&&(filter==='all'||filter==='sick'&&p.sick>0||filter==='entry'&&p.entry==='—'||filter==='gto'&&!p.gtoRegistered||filter==='social'&&p.social!=='Актуален'));let heads=page==='social'?['Ученик','Актуальность','Дата проверки']:page==='gto'?['Ученик','Регистрация','Приход']:['Ученик','Средний балл','Пропуски','Н по болезни','Вход','Выход'];b+=card('Найдено: '+ps.length,table(heads,ps.map(p=>row(page==='social'?[p.name,status(p.social,p.social==='Актуален'?'good':'warn'),p.social==='Актуален'?'20.11.2026':'01.09.2026']:page==='gto'?[p.name,gtoRegistration(p),p.gtoArrived?'Да':'Нет']:[p.name,p.avg.toFixed(2),p.missed,p.sick,p.entry,p.exit],p.id))))}else if(page==='profile'){let p=P[pid];b+=`<button onclick="go('students')">← К списку</button><h2>${p.name} · 9А</h2><div class="tools">${[['digital','Цифровой паспорт'],['social','Социальный паспорт'],['gto','ГТО'],['notes','Заметки']].map(([k,v])=>`<button class="${tab===k?'active':''}" onclick="tab='${k}';render()">${v}</button>`).join('')}</div>`;if(tab==='digital'){b+=`<div class="grid">${metric(p.avg.toFixed(2),'Средний балл')}${metric(p.missed,'Пропущено уроков')}${metric(p.sick,'Н по болезни')}</div>`+card('Успеваемость за текущий период',table(['Предмет','Оценки','Средний','Н','Н по болезни'],p.grades.map(g=>row([g.s,g.g.join(' · '),(g.g.reduce((a,b)=>a+b,0)/g.g.length).toFixed(2),g.missed,g.sick]))))+card('Посещаемость уроков',`<p>По демонстрационному плану: 240 уроков. Посещено: ${240-p.missed}. Посещаемость: ${pct(240-p.missed,240)}%.</p>${bar(pct(240-p.missed,240))}`)+card('История проходов через СКУД',table(['Дата','Первый вход','Последний выход'],[row(['26.11.2026',p.entry,p.exit]),row(['25.11.2026','08:14','15:23']),row(['24.11.2026','08:09','15:19'])])+'<p class="muted">Отсутствие отметки прохода не доказывает отсутствие ученика на уроке.</p>')}else if(tab==='social'){b+=card('Социальные сведения (вымышленные)',`<p>Состав семьи: ${p.family}</p><p>Социальная поддержка: ${p.support}</p><p>Контакты представителей: не используются в демо</p><p>Актуальность: ${p.social}</p><button onclick="P[pid].social='Актуален';render()">Отметить проверенным</button><p class="muted">В реальной системе доступ только по полномочиям.</p>`)}else if(tab==='gto'){b+=card('ГТО',table(['Регистрация','Приход'],[row([
+
+let passPupilId=null;
+function renderPassList() {
+  return '<div class="pass-list">'+card('Ученики · 9А',table(
+    ['Ученик','Пропуск'],
+    P.map(p=>row([
+      esc(p.name),
+      `<button type="button" onclick="openExitPass(${p.id})">Выдать пропуск</button>`
+    ]))
+  ))+'</div>';
+}
+function openExitPass(pupilId) {
+  passPupilId=pupilId;
+  const pupil=P[pupilId];
+  const now=new Intl.DateTimeFormat('sv-SE',{
+    timeZone:'Europe/Moscow',year:'numeric',month:'2-digit',day:'2-digit',
+    hour:'2-digit',minute:'2-digit',hourCycle:'h23'
+  }).formatToParts(new Date());
+  const parts=Object.fromEntries(now.map(part=>[part.type,part.value]));
+  const form=$('exit-pass-form');
+  form.elements.exitDate.value=`${parts.year}-${parts.month}-${parts.day}`;
+  form.elements.exitTime.value=`${parts.hour}:${parts.minute}`;
+  form.hidden=false;
+  $('exit-pass-title').textContent='Выдать пропуск';
+  $('exit-pass-student').textContent=pupil.name+' · 9А';
+  $('exit-pass-result').hidden=true;
+  $('exit-pass-qr').replaceChildren();
+  $('exit-pass-departure').textContent='';
+  $('exit-pass-error').hidden=true;
+  $('exit-pass-dialog').showModal();
+}
+function createExitPass(event) {
+  event.preventDefault();
+  const form=event.target;
+  if(!form.reportValidity()) return;
+  const pupil=P[passPupilId];
+  const exitDate=form.elements.exitDate.value;
+  const exitTime=form.elements.exitTime.value;
+  const payload={
+    version:1,
+    type:'school-exit-pass',
+    id:crypto.randomUUID(),
+    studentId:pupil.id+1,
+    studentName:pupil.name,
+    className:'9А',
+    exitAt:`${exitDate}T${exitTime}:00+03:00`,
+    timeZone:'Europe/Moscow',
+    createdAt:new Date().toISOString()
+  };
+  try {
+    qrcode.stringToBytes=qrcode.stringToBytesFuncs['UTF-8'];
+    const qr=qrcode(0,'M');
+    qr.addData(JSON.stringify(payload));
+    qr.make();
+    $('exit-pass-qr').innerHTML=qr.createSvgTag({
+      cellSize:4,margin:16,scalable:true,
+      alt:'QR-код пропуска',title:'Пропуск на выход'
+    });
+  } catch(error) {
+    $('exit-pass-error').textContent='Не удалось создать QR-код. Попробуйте ещё раз.';
+    $('exit-pass-error').hidden=false;
+    return;
+  }
+  $('exit-pass-departure').textContent=
+    'Выход '+exitDate.split('-').reverse().join('.')+' в '+exitTime+' (Москва)';
+  $('exit-pass-title').textContent='Пропуск создан';
+  form.hidden=true;
+  $('exit-pass-result').hidden=false;
+  $('exit-pass-result').querySelector('button').focus();
+}
+
+function render(){ renderNavigation();let b=`<h1 id="section-title" tabindex="-1">${labels[page]||'Карточка ученика'}</h1>`;if(page==='home'){b+=`<div class="grid">${metric(P.length,'Учеников')}${metric(P.filter(p=>p.entry!=='—').length,'Вход зафиксирован сегодня')}${metric((sum(p=>p.avg)/25).toFixed(2),'Средний балл')}${metric(sum(p=>p.missed),'Пропущено уроков')}${metric(sum(p=>p.sick),'Н по болезни')}</div>`;b+=gtoOverview()+card('Требуют проверки',table(['Событие','Ученик','Действие'],P.filter(p=>p.entry==='—').map(p=>row(['Нет отметки входа',link(p),'Сверить с журналом']))));b+=card('Ближайшие мероприятия',eventList(events.filter(e=>e.date>='2026-11-26')))+card('Рабочие задачи',tasks.map(t=>`<p>${t.done?'✓':'○'} ${esc(t.title)}</p>`).join('')+'<button onclick="go(\'tasks\')">Открыть задачи</button>')}else if(['students','social','digital','gto'].includes(page)){if(page==='gto')b+=gtoOverview();b+=`<div class="tools"><input id="q" placeholder="Поиск по ФИО" value="${esc(q)}" oninput="q=this.value;render();document.getElementById('q').focus()"><select onchange="filter=this.value;render()">${[['all','Все ученики'],['sick','Есть Н по болезни'],['entry','Нет входа'],['gto','ГТО — нет регистрации'],['social','Паспорт требует обновления']].map(([k,v])=>`<option value="${k}" ${filter===k?'selected':''}>${v}</option>`).join('')}</select></div>`;let ps=P.filter(p=>p.name.toLowerCase().includes(q.toLowerCase())&&(filter==='all'||filter==='sick'&&p.sick>0||filter==='entry'&&p.entry==='—'||filter==='gto'&&!p.gtoRegistered||filter==='social'&&p.social!=='Актуален'));let heads=page==='social'?['Ученик','Актуальность','Дата проверки']:page==='gto'?['Ученик','Регистрация','Приход']:['Ученик','Средний балл','Пропуски','Н по болезни','Вход','Выход'];b+=card('Найдено: '+ps.length,table(heads,ps.map(p=>row(page==='social'?[p.name,status(p.social,p.social==='Актуален'?'good':'warn'),p.social==='Актуален'?'20.11.2026':'01.09.2026']:page==='gto'?[p.name,gtoRegistration(p),p.gtoArrived?'Да':'Нет']:[p.name,p.avg.toFixed(2),p.missed,p.sick,p.entry,p.exit],p.id))))}else if(page==='passes'){b+=renderPassList()}else if(page==='profile'){let p=P[pid];b+=`<button onclick="go('students')">← К списку</button><h2>${p.name} · 9А</h2><div class="tools">${[['digital','Цифровой паспорт'],['social','Социальный паспорт'],['gto','ГТО'],['notes','Заметки']].map(([k,v])=>`<button class="${tab===k?'active':''}" onclick="tab='${k}';render()">${v}</button>`).join('')}</div>`;if(tab==='digital'){b+=`<div class="grid">${metric(p.avg.toFixed(2),'Средний балл')}${metric(p.missed,'Пропущено уроков')}${metric(p.sick,'Н по болезни')}</div>`+card('Успеваемость за текущий период',table(['Предмет','Оценки','Средний','Н','Н по болезни'],p.grades.map(g=>row([g.s,g.g.join(' · '),(g.g.reduce((a,b)=>a+b,0)/g.g.length).toFixed(2),g.missed,g.sick]))))+card('Посещаемость уроков',`<p>По демонстрационному плану: 240 уроков. Посещено: ${240-p.missed}. Посещаемость: ${pct(240-p.missed,240)}%.</p>${bar(pct(240-p.missed,240))}`)+card('История проходов через СКУД',table(['Дата','Первый вход','Последний выход'],[row(['26.11.2026',p.entry,p.exit]),row(['25.11.2026','08:14','15:23']),row(['24.11.2026','08:09','15:19'])])+'<p class="muted">Отсутствие отметки прохода не доказывает отсутствие ученика на уроке.</p>')}else if(tab==='social'){b+=card('Социальные сведения (вымышленные)',`<p>Состав семьи: ${p.family}</p><p>Социальная поддержка: ${p.support}</p><p>Контакты представителей: не используются в демо</p><p>Актуальность: ${p.social}</p><button onclick="P[pid].social='Актуален';render()">Отметить проверенным</button><p class="muted">В реальной системе доступ только по полномочиям.</p>`)}else if(tab==='gto'){b+=card('ГТО',table(['Регистрация','Приход'],[row([
   `<label>Регистрация <select onchange="setGtoRegistration(this.value==='yes')" aria-label="Регистрация ГТО">
     <option value="yes" ${p.gtoRegistered?'selected':''}>Да</option>
     <option value="no" ${!p.gtoRegistered?'selected':''}>Нет</option>
