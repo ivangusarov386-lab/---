@@ -176,6 +176,13 @@ body {
 .pass-qr svg { display: block; width: 100%; height: auto; }
 .pass-date { font-size: 20px; font-weight: 700; }
 .pass-error { color: #a73535; }
+
+.pass-settings { max-width: 600px; }
+.pass-settings label { margin-block: 14px; }
+.pass-settings input { display: block; width: 100%; margin-top: 6px; min-height: 44px; }
+.pass-settings a { display: inline-block; margin: 12px; color: #244e80; }
+.pass-dialog fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.pass-dialog fieldset:disabled { opacity: .7; }
 </style>
 <header class="masthead">
   <strong class="masthead-title">
@@ -190,17 +197,20 @@ body {
   <nav id="nav" class="section-nav" aria-label="Разделы кабинета"></nav>
 </details>
 <main id="main"></main>
-<dialog id="exit-pass-dialog" class="pass-dialog" aria-labelledby="exit-pass-title">
+<dialog id="exit-pass-dialog" class="pass-dialog" aria-labelledby="exit-pass-title" oncancel="if(passSending) event.preventDefault()">
   <h2 id="exit-pass-title">Выдать пропуск</h2>
   <p id="exit-pass-student"></p>
   <form id="exit-pass-form" onsubmit="createExitPass(event)">
+    <fieldset>
     <label>Дата выхода <input name="exitDate" type="date" required></label>
     <label>Время выхода (Москва) <input name="exitTime" type="time" required></label>
+    <p id="exit-pass-progress" role="status"></p>
     <p id="exit-pass-error" class="pass-error" role="alert" hidden></p>
     <div class="dialog-actions">
       <button class="primary" type="submit">Создать</button>
       <button type="button" onclick="$('exit-pass-dialog').close()">Отмена</button>
     </div>
+    </fieldset>
   </form>
   <section id="exit-pass-result" hidden aria-label="Созданный пропуск">
     <div id="exit-pass-qr" class="pass-qr"></div>
@@ -211,7 +221,8 @@ body {
   </section>
 </dialog>
 <script src="vendor/qrcode-generator-2.0.4.js"></script>
-<footer>Автономный прототип с вымышленными данными. Нет подключения к МЭШ, СКУД или ГТО. Изменения хранятся только до перезагрузки страницы.</footer><script>
+<script src="integration/pass-panel.js"></script>
+<footer>Автономный прототип с вымышленными данными. Нет подключения к МЭШ, СКУД или ГТО. При подключении Google Таблицы пропуска сохраняются в ней. Остальные изменения действуют до перезагрузки страницы.</footer><script>
 const first=['Артём','София','Максим','Анна','Михаил','Мария','Даниил','Алиса','Илья','Полина','Кирилл','Ева','Алексей','Дарья','Роман','Виктория','Никита','Ксения','Егор','Валерия','Матвей','Елизавета','Павел','Арина','Андрей'];const last=['Александров','Васильев','Дмитриев','Иванов','Козлов','Морозов','Петров','Соколов','Орлов','Лебедев','Волков','Смирнов','Новиков','Фёдоров','Попов','Семёнов','Кузнецов','Белов','Зайцев','Павлов','Сидоров','Голубев','Виноградов','Михайлов','Борисов'];const subjects=['Русский язык','Литература','Алгебра','Геометрия','История','Английский язык','Физика','Химия','Биология','Физкультура'];const P=first.map((n,i)=>{const missed=(i*7)%23, sick=Math.floor(missed*(i%5)/5);
 let remainingSick=sick;
 const grades=subjects.map((s,j)=>{
@@ -278,76 +289,6 @@ function setGtoDate(input) {
   P[pid].gtoDate=input.value;
 }
 
-let passPupilId=null;
-function renderPassList() {
-  return '<div class="pass-list">'+card('Ученики · 9А',table(
-    ['Ученик','Пропуск'],
-    P.map(p=>row([
-      esc(p.name),
-      `<button type="button" onclick="openExitPass(${p.id})">Выдать пропуск</button>`
-    ]))
-  ))+'</div>';
-}
-function openExitPass(pupilId) {
-  passPupilId=pupilId;
-  const pupil=P[pupilId];
-  const now=new Intl.DateTimeFormat('sv-SE',{
-    timeZone:'Europe/Moscow',year:'numeric',month:'2-digit',day:'2-digit',
-    hour:'2-digit',minute:'2-digit',hourCycle:'h23'
-  }).formatToParts(new Date());
-  const parts=Object.fromEntries(now.map(part=>[part.type,part.value]));
-  const form=$('exit-pass-form');
-  form.elements.exitDate.value=`${parts.year}-${parts.month}-${parts.day}`;
-  form.elements.exitTime.value=`${parts.hour}:${parts.minute}`;
-  form.hidden=false;
-  $('exit-pass-title').textContent='Выдать пропуск';
-  $('exit-pass-student').textContent=pupil.name+' · 9А';
-  $('exit-pass-result').hidden=true;
-  $('exit-pass-qr').replaceChildren();
-  $('exit-pass-departure').textContent='';
-  $('exit-pass-error').hidden=true;
-  $('exit-pass-dialog').showModal();
-}
-function createExitPass(event) {
-  event.preventDefault();
-  const form=event.target;
-  if(!form.reportValidity()) return;
-  const pupil=P[passPupilId];
-  const exitDate=form.elements.exitDate.value;
-  const exitTime=form.elements.exitTime.value;
-  const payload={
-    version:1,
-    type:'school-exit-pass',
-    id:crypto.randomUUID(),
-    studentId:pupil.id+1,
-    studentName:pupil.name,
-    className:'9А',
-    exitAt:`${exitDate}T${exitTime}:00+03:00`,
-    timeZone:'Europe/Moscow',
-    createdAt:new Date().toISOString()
-  };
-  try {
-    qrcode.stringToBytes=qrcode.stringToBytesFuncs['UTF-8'];
-    const qr=qrcode(0,'M');
-    qr.addData(JSON.stringify(payload));
-    qr.make();
-    $('exit-pass-qr').innerHTML=qr.createSvgTag({
-      cellSize:4,margin:16,scalable:true,
-      alt:'QR-код пропуска',title:'Пропуск на выход'
-    });
-  } catch(error) {
-    $('exit-pass-error').textContent='Не удалось создать QR-код. Попробуйте ещё раз.';
-    $('exit-pass-error').hidden=false;
-    return;
-  }
-  $('exit-pass-departure').textContent=
-    'Выход '+exitDate.split('-').reverse().join('.')+' в '+exitTime+' (Москва)';
-  $('exit-pass-title').textContent='Пропуск создан';
-  form.hidden=true;
-  $('exit-pass-result').hidden=false;
-  $('exit-pass-result').querySelector('button').focus();
-}
-
 function render(){ renderNavigation();let b=`<h1 id="section-title" tabindex="-1">${labels[page]||'Карточка ученика'}</h1>`;if(page==='home'){b+=`<div class="grid">${metric(P.length,'Учеников')}${metric(P.filter(p=>p.entry!=='—').length,'Вход зафиксирован сегодня')}${metric((sum(p=>p.avg)/25).toFixed(2),'Средний балл')}${metric(sum(p=>p.missed),'Пропущено уроков')}${metric(sum(p=>p.sick),'Н по болезни')}</div>`;b+=gtoOverview()+card('Требуют проверки',table(['Событие','Ученик','Действие'],P.filter(p=>p.entry==='—').map(p=>row(['Нет отметки входа',link(p),'Сверить с журналом']))));b+=card('Ближайшие мероприятия',eventList(events.filter(e=>e.date>='2026-11-26')))+card('Рабочие задачи',tasks.map(t=>`<p>${t.done?'✓':'○'} ${esc(t.title)}</p>`).join('')+'<button onclick="go(\'tasks\')">Открыть задачи</button>')}else if(['students','social','digital','gto'].includes(page)){if(page==='gto')b+=gtoOverview();b+=`<div class="tools"><input id="q" placeholder="Поиск по ФИО" value="${esc(q)}" oninput="q=this.value;render();document.getElementById('q').focus()"><select onchange="filter=this.value;render()">${[['all','Все ученики'],['sick','Есть Н по болезни'],['entry','Нет входа'],['gto','ГТО — нет регистрации'],['social','Паспорт требует обновления']].map(([k,v])=>`<option value="${k}" ${filter===k?'selected':''}>${v}</option>`).join('')}</select></div>`;let ps=P.filter(p=>p.name.toLowerCase().includes(q.toLowerCase())&&(filter==='all'||filter==='sick'&&p.sick>0||filter==='entry'&&p.entry==='—'||filter==='gto'&&!p.gtoRegistered||filter==='social'&&p.social!=='Актуален'));let heads=page==='social'?['Ученик','Актуальность','Дата проверки']:page==='gto'?['Ученик','Регистрация','Приход']:['Ученик','Средний балл','Пропуски','Н по болезни','Вход','Выход'];b+=card('Найдено: '+ps.length,table(heads,ps.map(p=>row(page==='social'?[p.name,status(p.social,p.social==='Актуален'?'good':'warn'),p.social==='Актуален'?'20.11.2026':'01.09.2026']:page==='gto'?[p.name,gtoRegistration(p),p.gtoArrived?'Да':'Нет']:[p.name,p.avg.toFixed(2),p.missed,p.sick,p.entry,p.exit],p.id))))}else if(page==='passes'){b+=renderPassList()}else if(page==='profile'){let p=P[pid];b+=`<button onclick="go('students')">← К списку</button><h2>${p.name} · 9А</h2><div class="tools">${[['digital','Цифровой паспорт'],['social','Социальный паспорт'],['gto','ГТО'],['notes','Заметки']].map(([k,v])=>`<button class="${tab===k?'active':''}" onclick="tab='${k}';render()">${v}</button>`).join('')}</div>`;if(tab==='digital'){b+=`<div class="grid">${metric(p.avg.toFixed(2),'Средний балл')}${metric(p.missed,'Пропущено уроков')}${metric(p.sick,'Н по болезни')}</div>`+card('Успеваемость за текущий период',table(['Предмет','Оценки','Средний','Н','Н по болезни'],p.grades.map(g=>row([g.s,g.g.join(' · '),(g.g.reduce((a,b)=>a+b,0)/g.g.length).toFixed(2),g.missed,g.sick]))))+card('Посещаемость уроков',`<p>По демонстрационному плану: 240 уроков. Посещено: ${240-p.missed}. Посещаемость: ${pct(240-p.missed,240)}%.</p>${bar(pct(240-p.missed,240))}`)+card('История проходов через СКУД',table(['Дата','Первый вход','Последний выход'],[row(['26.11.2026',p.entry,p.exit]),row(['25.11.2026','08:14','15:23']),row(['24.11.2026','08:09','15:19'])])+'<p class="muted">Отсутствие отметки прохода не доказывает отсутствие ученика на уроке.</p>')}else if(tab==='social'){b+=card('Социальные сведения (вымышленные)',`<p>Состав семьи: ${p.family}</p><p>Социальная поддержка: ${p.support}</p><p>Контакты представителей: не используются в демо</p><p>Актуальность: ${p.social}</p><button onclick="P[pid].social='Актуален';render()">Отметить проверенным</button><p class="muted">В реальной системе доступ только по полномочиям.</p>`)}else if(tab==='gto'){b+=card('ГТО',table(['Регистрация','Приход'],[row([
   `<label>Регистрация <select onchange="setGtoRegistration(this.value==='yes')" aria-label="Регистрация ГТО">
     <option value="yes" ${p.gtoRegistered?'selected':''}>Да</option>
@@ -358,4 +299,4 @@ function render(){ renderNavigation();let b=`<h1 id="section-title" tabindex="-1
     <option value="yes" ${p.gtoArrived?'selected':''}>Да</option>
     <option value="no" ${!p.gtoArrived?'selected':''}>Нет</option>
   </select></label>`
-])]))}else b+=card('Рабочая заметка',`<textarea rows="5" oninput="P[pid].note=this.value" placeholder="Добавить заметку">${esc(p.note)}</textarea><p class="muted">Сохраняется в текущем сеансе.</p>`)}else if(page==='calendar'){let count=new Date(year,month+1,0).getDate(),offset=(new Date(year,month,1).getDay()+6)%7,iso=d=>`${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;b+=card('Календарь',`<div class="tools"><button onclick="shift(-1)">←</button><b>${new Date(year,month,1).toLocaleDateString('ru',{month:'long',year:'numeric'})}</b><button onclick="shift(1)">→</button></div><div class="calendar">${['Пн','Вт','Ср','Чт','Пт','Сб','Вс'].map(x=>`<b>${x}</b>`).join('')}${'<span></span>'.repeat(offset)}${Array.from({length:count},(_,i)=>`<button class="day ${events.some(e=>e.date===iso(i+1))?'event':''} ${date===iso(i+1)?'active':''}" onclick="date='${iso(i+1)}';render()">${i+1}${events.some(e=>e.date===iso(i+1))?' •':''}</button>`).join('')}</div>`)+card('Мероприятия '+date,eventList(events.filter(e=>e.date===date)))+card('Добавить мероприятие',`<form onsubmit="addEvent(event)"><label>Название <input name="title" required></label><label>Дата <input name="date" type="date" value="${date}" required></label><label>Время <input name="time" type="time" required></label><label>Категория <select name="type"><option>Учёба</option><option>ГТО</option><option>Родители</option><option>Спорт</option><option>Школа</option></select></label><label>Место <input name="place"></label><button class="primary">Добавить</button></form>`)}else if(page==='tasks'){b+=card('Список задач',tasks.map((t,i)=>`<label><input type="checkbox" ${t.done?'checked':''} onchange="tasks[${i}].done=this.checked;render()"> ${esc(t.title)}</label>`).join('')+`<form onsubmit="event.preventDefault();tasks.push({title:this.title.value,done:false});render()"><input name="title" required placeholder="Новая задача"><button>Добавить</button></form>`)}else{b+=`<div class="grid">${metric(sum(p=>p.missed),'Пропущено уроков')}${metric(sum(p=>p.sick),'Н по болезни')}${metric(P.filter(p=>p.social!=='Актуален').length,'Паспорта к обновлению')}</div>`+gtoOverview()+card('Средний балл по предметам',subjects.map((s,j)=>{let v=sum(p=>p.grades[j].g.reduce((a,b)=>a+b,0)/5)/25;return `<p>${s} — ${v.toFixed(2)}</p>${bar(v/5*100)}`}).join(''))+card('Сводный реестр',`<button onclick="download()">Выгрузить CSV для Excel</button>`)}$('main').innerHTML=b;document.querySelectorAll('tr[data-id]').forEach(r=>r.onclick=()=>openP(+r.dataset.id))}function eventList(es){return es.length?table(['Дата','Время','Мероприятие','Категория','Место'],es.slice().sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time)).map(e=>row([esc(e.date),esc(e.time),esc(e.title),esc(e.type),esc(e.place)]))):'<p>Мероприятий нет</p>'}function shift(n){let d=new Date(year,month+n,1);year=d.getFullYear();month=d.getMonth();render()}function addEvent(e){e.preventDefault();let x=Object.fromEntries(new FormData(e.target));events.push(x);date=x.date;let d=new Date(date+'T12:00:00');year=d.getFullYear();month=d.getMonth();render()}function download(){let csv='\ufeffУченик;Средний балл;Пропуски;Н по болезни;Вход;Выход;ГТО — Регистрация;ГТО — Приход\n'+P.map(p=>[p.name,p.avg.toFixed(2).replace('.',','),p.missed,p.sick,p.entry,p.exit,gtoRegistration(p),p.gtoArrived?'Да':'Нет'].join(';')).join('\n');let a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));a.download='9A-demo.csv';a.click();URL.revokeObjectURL(a.href)}render();</script></html>
+])]))}else b+=card('Рабочая заметка',`<textarea rows="5" oninput="P[pid].note=this.value" placeholder="Добавить заметку">${esc(p.note)}</textarea><p class="muted">Сохраняется в текущем сеансе.</p>`)}else if(page==='calendar'){let count=new Date(year,month+1,0).getDate(),offset=(new Date(year,month,1).getDay()+6)%7,iso=d=>`${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;b+=card('Календарь',`<div class="tools"><button onclick="shift(-1)">←</button><b>${new Date(year,month,1).toLocaleDateString('ru',{month:'long',year:'numeric'})}</b><button onclick="shift(1)">→</button></div><div class="calendar">${['Пн','Вт','Ср','Чт','Пт','Сб','Вс'].map(x=>`<b>${x}</b>`).join('')}${'<span></span>'.repeat(offset)}${Array.from({length:count},(_,i)=>`<button class="day ${events.some(e=>e.date===iso(i+1))?'event':''} ${date===iso(i+1)?'active':''}" onclick="date='${iso(i+1)}';render()">${i+1}${events.some(e=>e.date===iso(i+1))?' •':''}</button>`).join('')}</div>`)+card('Мероприятия '+date,eventList(events.filter(e=>e.date===date)))+card('Добавить мероприятие',`<form onsubmit="addEvent(event)"><label>Название <input name="title" required></label><label>Дата <input name="date" type="date" value="${date}" required></label><label>Время <input name="time" type="time" required></label><label>Категория <select name="type"><option>Учёба</option><option>ГТО</option><option>Родители</option><option>Спорт</option><option>Школа</option></select></label><label>Место <input name="place"></label><button class="primary">Добавить</button></form>`)}else if(page==='tasks'){b+=card('Список задач',tasks.map((t,i)=>`<label><input type="checkbox" ${t.done?'checked':''} onchange="tasks[${i}].done=this.checked;render()"> ${esc(t.title)}</label>`).join('')+`<form onsubmit="event.preventDefault();tasks.push({title:this.title.value,done:false});render()"><input name="title" required placeholder="Новая задача"><button>Добавить</button></form>`)}else{b+=`<div class="grid">${metric(sum(p=>p.missed),'Пропущено уроков')}${metric(sum(p=>p.sick),'Н по болезни')}${metric(P.filter(p=>p.social!=='Актуален').length,'Паспорта к обновлению')}</div>`+gtoOverview()+card('Средний балл по предметам',subjects.map((s,j)=>{let v=sum(p=>p.grades[j].g.reduce((a,b)=>a+b,0)/5)/25;return `<p>${s} — ${v.toFixed(2)}</p>${bar(v/5*100)}`}).join(''))+card('Сводный реестр',`<button onclick="download()">Выгрузить CSV для Excel</button>`)}$('main').innerHTML=b;document.querySelectorAll('tr[data-id]').forEach(r=>r.onclick=()=>openP(+r.dataset.id))}function eventList(es){return es.length?table(['Дата','Время','Мероприятие','Категория','Место'],es.slice().sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time)).map(e=>row([esc(e.date),esc(e.time),esc(e.title),esc(e.type),esc(e.place)]))):'<p>Мероприятий нет</p>'}function shift(n){let d=new Date(year,month+n,1);year=d.getFullYear();month=d.getMonth();render()}function addEvent(e){e.preventDefault();let x=Object.fromEntries(new FormData(e.target));events.push(x);date=x.date;let d=new Date(date+'T12:00:00');year=d.getFullYear();month=d.getMonth();render()}function download(){let csv='\ufeffУченик;Средний балл;Пропуски;Н по болезни;Вход;Выход;ГТО — Регистрация;ГТО — Приход\n'+P.map(p=>[p.name,p.avg.toFixed(2).replace('.',','),p.missed,p.sick,p.entry,p.exit,gtoRegistration(p),p.gtoArrived?'Да':'Нет'].join(';')).join('\n');let a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));a.download='9A-demo.csv';a.click();URL.revokeObjectURL(a.href)}initializePasses();render();</script></html>
