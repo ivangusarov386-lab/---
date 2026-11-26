@@ -62,7 +62,9 @@ async function requestPassApi(connection, action, pass) {
       method: 'POST',
       credentials: 'omit',
       headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
-      body: JSON.stringify({ action, pass }),
+      body: JSON.stringify(action === 'studentPasses'
+        ? { action, studentId: pass.studentId, className: pass.className }
+        : { action, pass }),
       signal: controller.signal
     });
     if (!response.ok) throw new Error('Обработчик недоступен. Проверьте публикацию Google Apps Script.');
@@ -73,7 +75,8 @@ async function requestPassApi(connection, action, pass) {
       throw new Error('Обработчик вернул неверный ответ. Проверьте адрес /exec и доступ веб-приложения.');
     }
     if (!result || result.ok !== true) {
-      if (result?.error === 'Проверьте ключ учителя.') {
+      if (result?.error === 'Проверьте ключ учителя.' ||
+          (action === 'studentPasses' && result?.error === 'Неизвестная операция.')) {
         throw new Error('Обновите развертывание Google Apps Script по инструкции подключения.');
       }
       throw new Error(typeof result?.error === 'string' ? result.error : 'Таблица не подтвердила операцию.');
@@ -150,6 +153,7 @@ function openExitPass(studentId) {
   $('exit-pass-result').hidden = true;
   $('exit-pass-qr').replaceChildren();
   $('exit-pass-departure').textContent = '';
+  $('exit-pass-location').replaceChildren();
   $('exit-pass-error').hidden = true;
   $('exit-pass-progress').textContent = '';
   $('exit-pass-dialog').showModal();
@@ -194,7 +198,29 @@ async function createExitPass(event) {
     if (!confirmed || Object.keys(payload).some(field => confirmed[field] !== payload[field])) {
       throw new Error('Данные подтверждения отличаются от отправленного пропуска. Повторите отправку с тем же ID.');
     }
+    $('exit-pass-progress').textContent = 'Проверяем доступность пропуска для all_class…';
+    const readResult = await requestPassApi(passConnection, 'studentPasses', payload);
+    const saved = readResult.passes?.find(pass => pass.id === payload.id);
+    if (!saved || Object.keys(payload).some(field => saved[field] !== payload[field]) ||
+        typeof saved.qrPayload !== 'string') {
+      throw new Error('Запись отправлена, но чтение для all_class её не подтвердило. Повторите отправку с тем же ID.');
+    }
+    const qrPayload = JSON.parse(saved.qrPayload);
+    if (Object.keys(payload).some(field => qrPayload[field] !== payload[field])) {
+      throw new Error('QR в таблице отличается от выданного пропуска. Проверьте строку в таблице.');
+    }
     $('exit-pass-qr').innerHTML = image;
+    $('exit-pass-location').replaceChildren();
+    if (Number.isSafeInteger(saved.rowNumber) && saved.rowNumber > 1 &&
+        typeof saved.sheetUrl === 'string' &&
+        /^https:\/\/docs\.google\.com\/spreadsheets\/d\/[A-Za-z0-9_-]+\/edit#/.test(saved.sheetUrl)) {
+      const link = document.createElement('a');
+      link.href = saved.sheetUrl;
+      link.target = '_blank';
+      link.rel = 'noopener';
+      link.textContent = 'Открыть строку ' + saved.rowNumber + ' в таблице';
+      $('exit-pass-location').append(link);
+    }
     $('exit-pass-departure').textContent = 'Выход ' + payload.exitAt.slice(0, 10).split('-').reverse().join('.') +
       ' в ' + payload.exitAt.slice(11, 16) + ' (Москва)';
     $('exit-pass-title').textContent = 'Пропуск сохранён в таблице';

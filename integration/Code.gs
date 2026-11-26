@@ -28,7 +28,10 @@ function doPost(event) {
       return passResponse_({ ok: true, students: readStudents_(book) });
     }
     if (request.action === 'studentPasses') {
-      return passResponse_({ ok: true, passes: readStudentPasses_(book, request) });
+      const result = readStudentPasses_(book, request);
+      const response = { ok: true, passes: result.passes };
+      if (result.warnings.length) response.warnings = result.warnings;
+      return passResponse_(response);
     }
     requirePass_(request.action === 'createPass', 'Неизвестная операция.');
     return passResponse_({ ok: true, pass: savePass_(book, request.pass) });
@@ -69,31 +72,47 @@ function readStudentPasses_(book, request) {
   requirePass_(student, 'Ученик не найден в выбранном классе. Обновите список учеников.');
   const data = getSheetData_(book, 'Пропуска', PASS_FIELDS);
   const passes = [];
-  data.rows.forEach(row => {
+  const warnings = [];
+  data.rows.forEach((row, index) => {
     if (Number(row[data.columns.studentId]) !== student.studentId
       || String(row[data.columns.className]).trim() !== student.className) return;
-    const qrPayload = row[data.columns.qrPayload];
-    let pass;
-    try { pass = JSON.parse(qrPayload); } catch (error) {
-      failPass_('Повреждён QR-код пропуска выбранного ученика. Обратитесь к учителю.');
+    const rowNumber = index + 2;
+    try {
+      const qrPayload = row[data.columns.qrPayload];
+      let pass;
+      try {
+        pass = JSON.parse(qrPayload);
+      } catch (error) {
+        failPass_('Повреждён или не заполнен QR-код.');
+      }
+      requirePass_(typeof qrPayload === 'string' && pass && pass.version === 1
+        && pass.type === 'school-exit-pass' && typeof pass.id === 'string'
+        && pass.id === row[data.columns.id] && pass.studentId === student.studentId
+        && pass.className === student.className && typeof pass.studentName === 'string'
+        && pass.studentName === row[data.columns.studentName]
+        && pass.timeZone === 'Europe/Moscow' && typeof pass.exitAt === 'string'
+        && Number.isFinite(new Date(pass.exitAt).getTime()),
+        'Данные строки не совпадают с QR-кодом.');
+      const record = {};
+      QR_FIELDS.forEach(field => { record[field] = pass[field]; });
+      record.qrPayload = qrPayload;
+      record.exitDate = Utilities.formatDate(new Date(pass.exitAt), 'Europe/Moscow', 'yyyy-MM-dd');
+      record.exitTime = Utilities.formatDate(new Date(pass.exitAt), 'Europe/Moscow', 'HH:mm');
+      record.rowNumber = rowNumber;
+      record.sheetUrl = 'https://docs.google.com/spreadsheets/d/' + PASS_SPREADSHEET_ID
+        + '/edit#gid=' + data.sheet.getSheetId() + '&range=A' + rowNumber;
+      passes.push(record);
+    } catch (error) {
+      warnings.push({
+        rowNumber: rowNumber,
+        message: error.passMessage || 'Не удалось прочитать строку пропуска.'
+      });
     }
-    requirePass_(typeof qrPayload === 'string' && pass && pass.version === 1
-      && pass.type === 'school-exit-pass' && typeof pass.id === 'string'
-      && pass.id === row[data.columns.id] && pass.studentId === student.studentId
-      && pass.className === student.className && typeof pass.studentName === 'string'
-      && pass.studentName === row[data.columns.studentName]
-      && pass.timeZone === 'Europe/Moscow' && typeof pass.exitAt === 'string'
-      && Number.isFinite(new Date(pass.exitAt).getTime()),
-      'Данные пропуска не совпадают с QR-кодом. Обратитесь к учителю.');
-    const record = {};
-    QR_FIELDS.forEach(field => { record[field] = pass[field]; });
-    record.qrPayload = qrPayload;
-    // Derive display values from the same instant as the immutable QR.
-    record.exitDate = Utilities.formatDate(new Date(pass.exitAt), 'Europe/Moscow', 'yyyy-MM-dd');
-    record.exitTime = Utilities.formatDate(new Date(pass.exitAt), 'Europe/Moscow', 'HH:mm');
-    passes.push(record);
   });
-  return passes.sort((a, b) => new Date(b.exitAt) - new Date(a.exitAt) || a.id.localeCompare(b.id));
+  return {
+    passes: passes.sort((a, b) => new Date(b.exitAt) - new Date(a.exitAt) || a.id.localeCompare(b.id)),
+    warnings: warnings
+  };
 }
 
 function savePass_(book, input) {
@@ -163,6 +182,15 @@ function savePass_(book, input) {
     data.sheet.getRange(nextRow, data.columns.exitDate + 1).setNumberFormat('dd.MM.yyyy');
     data.sheet.getRange(nextRow, data.columns.exitTime + 1).setNumberFormat('HH:mm');
     SpreadsheetApp.flush();
+    const written = data.sheet.getRange(nextRow, 1, 1, data.headers.length).getValues()[0];
+    requirePass_(
+      written && written[data.columns.id] === pass.id &&
+      Number(written[data.columns.studentId]) === pass.studentId &&
+      written[data.columns.studentName] === pass.studentName &&
+      written[data.columns.className] === pass.className &&
+      written[data.columns.qrPayload] === record.qrPayload,
+      'Не удалось подтвердить запись строки. Повторите отправку с тем же ID.'
+    );
     return pass;
   } finally {
     lock.releaseLock();

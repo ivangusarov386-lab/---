@@ -27,12 +27,14 @@ function fixture(options = {}) {
     return {
       getDataRange: () => ({ getValues: () => values }),
       getLastRow: () => values.length,
+      getSheetId: () => 123,
       getRange(row, column) {
         return {
           setValues(records) {
             assert(held, 'A write must hold the script lock');
             values[row - 1] = records[0];
           },
+          getValues: () => [values[row - 1]],
           setNumberFormat() {}
         };
       }
@@ -187,7 +189,8 @@ test('a new teacher pass appears with the exact stored UTF-8 payload and origina
   const payload = JSON.stringify(example, null, 2);
   api.rows[1][headers.indexOf('qrPayload')] = payload;
   assert.deepEqual(readPasses(api), { ok: true, passes: [{ ...example, qrPayload: payload,
-    exitDate: '2026-11-27', exitTime: '14:30' }] });
+    exitDate: '2026-11-27', exitTime: '14:30', rowNumber: 2,
+    sheetUrl: 'https://docs.google.com/spreadsheets/d/1YXDgWlNFhS4ONq7qlo33HgIgG4rYoFKYmotsLh5cxnY/edit#gid=123&range=A2' }] });
   assert.equal(api.rows.length, 2);
   assert.equal(api.releases, 1);
 });
@@ -213,13 +216,14 @@ test('foreign and empty rows are ignored before parsing their payload', () => {
   api.rows.push(foreign, Array(headers.length).fill(''));
   assert.equal(readPasses(api).passes.length, 1);
 });
-test('a substituted QR identity or ID fails closed without returning data', () => {
+test('a substituted QR identity or ID is excluded with a row warning', () => {
   for (const change of [{ studentId: 2 }, { className: '9Ц' }, { id: 'another-id' }]) {
     const api = fixture(); create(api);
     api.rows[1][headers.indexOf('qrPayload')] = JSON.stringify({ ...example, ...change });
     const result = readPasses(api);
-    assert.equal(result.ok, false);
-    assert.equal(result.passes, undefined);
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.passes, []);
+    assert.equal(result.warnings[0].rowNumber, 2);
   }
 });
 test('reading reordered columns preserves IDs and orders latest exit first', () => {
@@ -233,12 +237,33 @@ test('reading reordered columns preserves IDs and orders latest exit first', () 
   assert.equal(result.passes[0].exitTime, '09:15');
 });
 
-test('malformed QR data for the selected student produces an explicit error', () => {
+test('malformed QR data for the selected student produces a row warning', () => {
   const api = fixture();
   create(api);
   api.rows[1][headers.indexOf('qrPayload')] = '{bad';
   const result = readPasses(api);
-  assert.equal(result.ok, false);
-  assert.match(result.error, /Повреждён/);
-  assert.equal(result.passes, undefined);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.passes, []);
+  assert.match(result.warnings[0].message, /Повреждён/);
+  assert.equal(result.warnings[0].rowNumber, 2);
+});
+
+
+test('a cleared old row does not hide a newly issued pass for the same pupil', () => {
+  const api = fixture();
+  create(api);
+  // Reproduce a partial old example row left in the imported spreadsheet.
+  for (let column = 4; column < headers.length; column++) api.rows[1][column] = '';
+  const fresh = {
+    ...example, id: '8eeb7b42-0ef3-4ee5-bcbd-167ab1b144f3',
+    exitAt: '2026-11-27T23:54:00+03:00'
+  };
+  assert.equal(create(api, fresh).ok, true);
+  const result = readPasses(api);
+  assert.equal(result.ok, true);
+  assert.equal(result.passes.length, 1);
+  assert.equal(result.passes[0].id, fresh.id);
+  assert.equal(result.passes[0].rowNumber, 3);
+  assert.equal(result.passes[0].exitTime, '23:54');
+  assert.equal(result.warnings[0].rowNumber, 2);
 });
