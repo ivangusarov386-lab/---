@@ -209,10 +209,11 @@ function gtoRegistration(p) {
   return p.gtoRegistered ? `Да (${p.gtoDate.split('-').reverse().join('.')})` : 'Нет';
 }
 function gtoOverview() {
-  const arrived=P.filter(p=>p.gtoArrived).length;
+  const registeredCount=registered();
+  const arrived=P.filter(p=>p.gtoRegistered&&p.gtoArrived).length;
   return card('ГТО',table(['Регистрация','Приход'],[row([
-    `Да — ${registered()}, нет — ${P.length-registered()}`,
-    `Да — ${arrived}, нет — ${P.length-arrived}`
+    `${registeredCount}/${P.length}`,
+    `${arrived}/${registeredCount}`
   ])]));
 }
 function setGtoRegistration(value) {
