@@ -1,7 +1,9 @@
 const DEFAULT_PASS_ENDPOINT = 'https://script.google.com/macros/s/AKfycbyanuYCJH_cSy_9_r0bLJLvzF0BG0jAUrpIlpycOXpDr_mtd64_9tVrTU122JWmQilV6Q/exec';
 let passStudents = [];
-let passConnection = { endpoint: DEFAULT_PASS_ENDPOINT, teacherKey: '' };
+let passConnection = { endpoint: DEFAULT_PASS_ENDPOINT };
 let passConnectionReady = false;
+let passConnecting = false;
+let passConnectionMessage = '';
 let passPupilId = null;
 let pendingExitPass = null;
 let passSending = false;
@@ -10,7 +12,7 @@ function initializePasses() {
   passStudents = P.map(p => ({ studentId: p.id + 1, studentName: p.name, className: '9А' }));
   try {
     passConnection.endpoint = localStorage.getItem('school-pass-endpoint') || DEFAULT_PASS_ENDPOINT;
-    passConnection.teacherKey = sessionStorage.getItem('school-pass-teacher-key') || '';
+    sessionStorage.removeItem('school-pass-teacher-key');
     const saved = sessionStorage.getItem('school-pass-pending');
     if (saved) pendingExitPass = JSON.parse(saved);
   } catch (error) {
@@ -19,24 +21,19 @@ function initializePasses() {
 }
 
 function renderPassList() {
-  const notice = passConnectionReady
+  const notice = passConnectionMessage || (passConnectionReady
     ? 'Таблица подключена. Учеников — ' + passStudents.length + '.'
-    : 'Подключите Google Таблицу для отправки пропусков.';
+    : 'Подключение к таблице выполняется при открытии раздела.');
   return card('Подключение пропусков', `
     <p id="pass-connection-status" role="status">${esc(notice)}</p>
-    <details ${passConnectionReady ? '' : 'open'}>
+    <details>
       <summary>Настройки подключения</summary>
       <form onsubmit="connectPassTable(event)" class="pass-settings">
         <label>Адрес веб-приложения Google Apps Script
           <input name="endpoint" type="url" required value="${esc(passConnection.endpoint)}"
             placeholder="https://script.google.com/macros/s/…/exec">
         </label>
-        <label>Ключ учителя
-          <input name="teacherKey" type="password" autocomplete="off"
-            placeholder="${passConnection.teacherKey ? 'Ключ сохранён на сеанс' : 'Ключ из Google Apps Script'}">
-        </label>
-        <p class="muted">Ключ хранится в браузере на время сеанса вкладки.</p>
-        <button type="submit">Подключить таблицу</button>
+        <button type="submit" ${passConnecting ? 'disabled' : ''}>Подключить таблицу</button>
         <a href="https://github.com/ivangusarov386-lab/---/blob/main/integration/README.md" target="_blank" rel="noopener">Инструкция подключения</a>
       </form>
     </details>
@@ -54,7 +51,6 @@ function validatePassConnection(connection) {
   if (!/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(connection.endpoint)) {
     throw new Error('Укажите адрес опубликованного веб-приложения Google Apps Script, заканчивающийся на /exec.');
   }
-  if (!connection.teacherKey) throw new Error('Введите ключ учителя из Google Apps Script.');
 }
 
 async function requestPassApi(connection, action, pass) {
@@ -66,7 +62,7 @@ async function requestPassApi(connection, action, pass) {
       method: 'POST',
       credentials: 'omit',
       headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
-      body: JSON.stringify({ action, teacherKey: connection.teacherKey, pass }),
+      body: JSON.stringify({ action, pass }),
       signal: controller.signal
     });
     if (!response.ok) throw new Error('Обработчик недоступен. Проверьте публикацию Google Apps Script.');
@@ -77,6 +73,9 @@ async function requestPassApi(connection, action, pass) {
       throw new Error('Обработчик вернул неверный ответ. Проверьте адрес /exec и доступ веб-приложения.');
     }
     if (!result || result.ok !== true) {
+      if (result?.error === 'Проверьте ключ учителя.') {
+        throw new Error('Обновите развертывание Google Apps Script по инструкции подключения.');
+      }
       throw new Error(typeof result?.error === 'string' ? result.error : 'Таблица не подтвердила операцию.');
     }
     return result;
@@ -91,15 +90,17 @@ async function requestPassApi(connection, action, pass) {
 }
 
 async function connectPassTable(event) {
-  event.preventDefault();
-  const form = event.target;
+  if (event) event.preventDefault();
+  if (passConnecting) return;
+  const form = event?.target;
   const connection = {
-    endpoint: form.elements.endpoint.value.trim(),
-    teacherKey: form.elements.teacherKey.value.trim() || passConnection.teacherKey
+    endpoint: form ? form.elements.endpoint.value.trim() : passConnection.endpoint
   };
-  const button = form.querySelector('button');
-  button.disabled = true;
-  $('pass-connection-status').textContent = 'Проверяем подключение…';
+  passConnecting = true;
+  passConnectionMessage = 'Подключаем таблицу…';
+  const button = document.querySelector('.pass-settings button');
+  if (button) button.disabled = true;
+  if (page === 'passes') $('pass-connection-status').textContent = passConnectionMessage;
   try {
     const result = await requestPassApi(connection, 'students');
     if (!Array.isArray(result.students) || !result.students.every(p =>
@@ -113,21 +114,21 @@ async function connectPassTable(event) {
     passConnectionReady = true;
     try {
       localStorage.setItem('school-pass-endpoint', connection.endpoint);
-      sessionStorage.setItem('school-pass-teacher-key', connection.teacherKey);
     } catch (error) {
       // An unavailable storage does not prevent sending during this page visit.
     }
-    if (page === 'passes') render();
+    passConnectionMessage = '';
   } catch (error) {
-    if (page === 'passes') $('pass-connection-status').textContent = error.message;
+    passConnectionMessage = error.message;
   } finally {
-    button.disabled = false;
+    passConnecting = false;
+    if (page === 'passes') render();
   }
 }
 
 function openExitPass(studentId) {
   if (!passConnectionReady) {
-    $('pass-connection-status').textContent = 'Сначала подключите Google Таблицу в настройках выше.';
+    $('pass-connection-status').textContent = passConnecting ? 'Дождитесь подключения к таблице.' : 'Проверьте подключение к таблице в настройках.';
     document.querySelector('.pass-settings input').focus();
     return;
   }

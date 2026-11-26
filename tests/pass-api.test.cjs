@@ -39,6 +39,8 @@ function fixture(options = {}) {
     };
   }
   const book = {
+    getSpreadsheetTimeZone: () => 'UTC',
+    setSpreadsheetTimeZone: zone => assert.equal(zone, 'Europe/Moscow'),
     getSheetByName(name) {
       if (name === 'Ученики') return sheet([
         ['studentId', 'studentName', 'className'],
@@ -50,7 +52,6 @@ function fixture(options = {}) {
     }
   };
   const context = vm.createContext({
-    PropertiesService: { getScriptProperties: () => ({ getProperty: () => 'test-only-key' }) },
     SpreadsheetApp: {
       openById: () => { opens++; return book; },
       flush: () => {
@@ -87,19 +88,21 @@ function fixture(options = {}) {
   };
 }
 function create(api, pass = example) {
-  return api.request({ action: 'createPass', teacherKey: 'test-only-key', pass });
+  return api.request({ action: 'createPass', pass });
 }
 
-test('unauthorized requests cannot read the roster or write a pass', () => {
+test('unknown actions and invalid requests are rejected without opening the spreadsheet', () => {
   const api = fixture();
-  assert.equal(api.request({ action: 'students', teacherKey: 'wrong' }).ok, false);
+  for (const request of [null, {}, {action: 'deletePass'}]) {
+    assert.equal(api.request(request).ok, false);
+  }
   assert.equal(api.opens, 0);
   assert.equal(api.rows.length, 1);
 });
 
 test('roster returns stable numeric IDs and exact names', () => {
   const api = fixture();
-  const result = api.request({ action: 'students', teacherKey: 'test-only-key' });
+  const result = api.request({ action: 'students' });
   assert.equal(result.ok, true);
   assert.deepEqual(result.students[0], {
     studentId: 1, studentName: example.studentName, className: '9А'

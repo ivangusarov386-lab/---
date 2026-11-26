@@ -242,6 +242,7 @@ const entry=i===6||i===19?'—':`08:${String(3+(i*7)%46).padStart(2,'0')}`;retur
     $('navigation-panel').open=false;
     $('section-title').focus({preventScroll:true});
   }
+  if(k==='passes'&&!passConnectionReady) connectPassTable();
 },openP=i=>{pid=i;tab=['social','gto'].includes(page)?page:'digital';page='profile';render()},pct=(n,d)=>Math.round(n/d*100),bar=n=>`<div class="bar"><i style="width:${n}%"></i></div>`;
 const navTiles = {
   home: ['Главная', '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>'],

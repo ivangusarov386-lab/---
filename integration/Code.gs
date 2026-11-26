@@ -1,4 +1,4 @@
-// Bind this script to the Google spreadsheet and run setupIntegration once.
+// Deploy this script as a web app for the demo spreadsheet.
 const PASS_SPREADSHEET_ID = '1YXDgWlNFhS4ONq7qlo33HgIgG4rYoFKYmotsLh5cxnY';
 const PASS_FIELDS = [
   'id', 'studentId', 'studentName', 'className', 'exitDate', 'exitTime',
@@ -8,22 +8,6 @@ const QR_FIELDS = [
   'version', 'type', 'id', 'studentId', 'studentName',
   'className', 'exitAt', 'timeZone', 'createdAt'
 ];
-
-function setupIntegration() {
-  const book = SpreadsheetApp.openById(PASS_SPREADSHEET_ID);
-  getSheetData_(book, 'Ученики', ['studentId', 'studentName', 'className']);
-  getSheetData_(book, 'Пропуска', PASS_FIELDS);
-  book.setSpreadsheetTimeZone('Europe/Moscow');
-  const properties = PropertiesService.getScriptProperties();
-  if (!properties.getProperty('TEACHER_KEY')) {
-    properties.setProperty('TEACHER_KEY', Utilities.getUuid() + Utilities.getUuid());
-  }
-  SpreadsheetApp.getUi().alert(
-    'Ключ учителя',
-    properties.getProperty('TEACHER_KEY'),
-    SpreadsheetApp.getUi().ButtonSet.OK
-  );
-}
 
 function doPost(event) {
   try {
@@ -35,8 +19,10 @@ function doPost(event) {
     } catch (error) {
       failPass_('Некорректный JSON.');
     }
-    const key = PropertiesService.getScriptProperties().getProperty('TEACHER_KEY');
-    requirePass_(request && key && request.teacherKey === key, 'Проверьте ключ учителя.');
+    requirePass_(
+      request && (request.action === 'students' || request.action === 'createPass'),
+      'Неизвестная операция.'
+    );
     const book = SpreadsheetApp.openById(PASS_SPREADSHEET_ID);
     if (request.action === 'students') {
       return passResponse_({ ok: true, students: readStudents_(book) });
@@ -120,6 +106,9 @@ function savePass_(book, input) {
         'Этот ID уже используется для другого пропуска.'
       );
       return stored;
+    }
+    if (book.getSpreadsheetTimeZone() !== 'Europe/Moscow') {
+      book.setSpreadsheetTimeZone('Europe/Moscow');
     }
     const record = Object.assign({}, pass, {
       exitDate: new Date(pass.exitAt.slice(0, 10) + 'T00:00:00+03:00'),
