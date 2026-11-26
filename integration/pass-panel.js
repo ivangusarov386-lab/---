@@ -1,5 +1,6 @@
+const DEFAULT_PASS_ENDPOINT = 'https://script.google.com/macros/s/AKfycbyanuYCJH_cSy_9_r0bLJLvzF0BG0jAUrpIlpycOXpDr_mtd64_9tVrTU122JWmQilV6Q/exec';
 let passStudents = [];
-let passConnection = { endpoint: '', teacherKey: '' };
+let passConnection = { endpoint: DEFAULT_PASS_ENDPOINT, teacherKey: '' };
 let passConnectionReady = false;
 let passPupilId = null;
 let pendingExitPass = null;
@@ -8,7 +9,7 @@ let passSending = false;
 function initializePasses() {
   passStudents = P.map(p => ({ studentId: p.id + 1, studentName: p.name, className: '9А' }));
   try {
-    passConnection.endpoint = localStorage.getItem('school-pass-endpoint') || '';
+    passConnection.endpoint = localStorage.getItem('school-pass-endpoint') || DEFAULT_PASS_ENDPOINT;
     passConnection.teacherKey = sessionStorage.getItem('school-pass-teacher-key') || '';
     const saved = sessionStorage.getItem('school-pass-pending');
     if (saved) pendingExitPass = JSON.parse(saved);
