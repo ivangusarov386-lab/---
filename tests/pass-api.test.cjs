@@ -59,7 +59,13 @@ function fixture(options = {}) {
       }
     },
     Utilities: {
-      formatDate: date => new Date(date.getTime() + 3 * 3600000).toISOString().slice(0, 19) + '+03:00'
+      formatDate(date, zone, pattern) {
+        assert.equal(zone, 'Europe/Moscow');
+        const local = new Date(date.getTime() + 3 * 3600000).toISOString();
+        if (pattern === 'yyyy-MM-dd') return local.slice(0, 10);
+        if (pattern === 'HH:mm') return local.slice(11, 16);
+        return local.slice(0, 19) + '+03:00';
+      }
     },
     LockService: {
       getScriptLock: () => ({
@@ -164,4 +170,67 @@ test('reordered columns are mapped by name', () => {
   assert.equal(create(api).ok, true);
   assert.equal(api.rows[1][reversed.indexOf('studentId')], 1);
   assert.deepEqual(JSON.parse(api.rows[1][reversed.indexOf('qrPayload')]), example);
+});
+
+
+function readPasses(api, studentId = 1, className = '9А') {
+  return api.request({ action: 'studentPasses', studentId, className });
+}
+
+test('student receives the created pass with the unchanged stored QR string', () => {
+  const api = fixture();
+  assert.deepEqual(readPasses(api), { ok: true, passes: [] });
+  create(api);
+  // Existing spreadsheet rows may store formatted JSON, which must remain exact.
+  const qrPayload = JSON.stringify(example, null, 2);
+  api.rows[1][headers.indexOf('qrPayload')] = qrPayload;
+  const result = readPasses(api);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.passes, [{
+    ...example, qrPayload, exitDate: '2026-11-27', exitTime: '14:30'
+  }]);
+});
+
+test('student read matches both ID and class and excludes foreign corrupted rows', () => {
+  const api = fixture();
+  create(api);
+  const foreign = [...api.rows[1]];
+  foreign[headers.indexOf('studentId')] = 2;
+  foreign[headers.indexOf('qrPayload')] = 'corrupted foreign QR';
+  api.rows.push(foreign);
+  const wrongClass = [...api.rows[1]];
+  wrongClass[headers.indexOf('className')] = '9Ц';
+  wrongClass[headers.indexOf('qrPayload')] = 'corrupted foreign class QR';
+  api.rows.push(wrongClass);
+  assert.equal(readPasses(api).passes.length, 1);
+  assert.equal(readPasses(api, 1, '9Ц').ok, false);
+  assert.equal(readPasses(api, '1').ok, false);
+  assert.equal(readPasses(api, 999).ok, false);
+});
+
+test('student receives newest departures first and no records for another student', () => {
+  const api = fixture();
+  create(api);
+  const newer = {
+    ...example, id: 'd4f0378c-8f03-46f5-8e8c-68d74e61db3b',
+    exitAt: '2026-11-28T09:05:00+03:00'
+  };
+  create(api, newer);
+  const result = readPasses(api);
+  assert.deepEqual(result.passes.map(pass => pass.id), [newer.id, example.id]);
+  assert.equal(result.passes[0].exitDate, '2026-11-28');
+  assert.equal(result.passes[0].exitTime, '09:05');
+  assert.deepEqual(readPasses(api, 2).passes, []);
+});
+
+test('malformed and mismatched QR data for the selected pupil cause explicit errors', () => {
+  const api = fixture();
+  create(api);
+  const column = headers.indexOf('qrPayload');
+  api.rows[1][column] = '{bad';
+  assert.equal(readPasses(api).ok, false);
+  api.rows[1][column] = JSON.stringify({ ...example, studentId: 2 });
+  assert.equal(readPasses(api).ok, false);
+  api.rows[1][column] = JSON.stringify({ ...example, id: 'substituted' });
+  assert.equal(readPasses(api).ok, false);
 });
