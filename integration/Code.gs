@@ -20,12 +20,15 @@ function doPost(event) {
       failPass_('Некорректный JSON.');
     }
     requirePass_(
-      request && (request.action === 'students' || request.action === 'createPass'),
+      request && (request.action === 'students' || request.action === 'createPass' || request.action === 'studentPasses'),
       'Неизвестная операция.'
     );
     const book = SpreadsheetApp.openById(PASS_SPREADSHEET_ID);
     if (request.action === 'students') {
       return passResponse_({ ok: true, students: readStudents_(book) });
+    }
+    if (request.action === 'studentPasses') {
+      return passResponse_({ ok: true, passes: readStudentPasses_(book, request) });
     }
     requirePass_(request.action === 'createPass', 'Неизвестная операция.');
     return passResponse_({ ok: true, pass: savePass_(book, request.pass) });
@@ -53,6 +56,44 @@ function readStudents_(book) {
     seen.add(studentId);
     return { studentId: studentId, studentName: studentName, className: className };
   });
+}
+
+// Read-only demo endpoint: select by BOTH stable student ID and exact class.
+// Never regenerate the stored QR string or the teacher's original UUID.
+function readStudentPasses_(book, request) {
+  requirePass_(Number.isSafeInteger(request.studentId) && request.studentId > 0
+    && typeof request.className === 'string' && request.className.length > 0
+    && request.className.length <= 30, 'Выберите ученика и класс.');
+  const student = readStudents_(book).find(row => row.studentId === request.studentId
+    && row.className === request.className);
+  requirePass_(student, 'Ученик не найден в выбранном классе. Обновите список учеников.');
+  const data = getSheetData_(book, 'Пропуска', PASS_FIELDS);
+  const passes = [];
+  data.rows.forEach(row => {
+    if (Number(row[data.columns.studentId]) !== student.studentId
+      || String(row[data.columns.className]).trim() !== student.className) return;
+    const qrPayload = row[data.columns.qrPayload];
+    let pass;
+    try { pass = JSON.parse(qrPayload); } catch (error) {
+      failPass_('Повреждён QR-код пропуска выбранного ученика. Обратитесь к учителю.');
+    }
+    requirePass_(typeof qrPayload === 'string' && pass && pass.version === 1
+      && pass.type === 'school-exit-pass' && typeof pass.id === 'string'
+      && pass.id === row[data.columns.id] && pass.studentId === student.studentId
+      && pass.className === student.className && typeof pass.studentName === 'string'
+      && pass.studentName === row[data.columns.studentName]
+      && pass.timeZone === 'Europe/Moscow' && typeof pass.exitAt === 'string'
+      && Number.isFinite(new Date(pass.exitAt).getTime()),
+      'Данные пропуска не совпадают с QR-кодом. Обратитесь к учителю.');
+    const record = {};
+    QR_FIELDS.forEach(field => { record[field] = pass[field]; });
+    record.qrPayload = qrPayload;
+    // Derive display values from the same instant as the immutable QR.
+    record.exitDate = Utilities.formatDate(new Date(pass.exitAt), 'Europe/Moscow', 'yyyy-MM-dd');
+    record.exitTime = Utilities.formatDate(new Date(pass.exitAt), 'Europe/Moscow', 'HH:mm');
+    passes.push(record);
+  });
+  return passes.sort((a, b) => new Date(b.exitAt) - new Date(a.exitAt) || a.id.localeCompare(b.id));
 }
 
 function savePass_(book, input) {

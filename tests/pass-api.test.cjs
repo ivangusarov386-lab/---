@@ -59,7 +59,11 @@ function fixture(options = {}) {
       }
     },
     Utilities: {
-      formatDate: date => new Date(date.getTime() + 3 * 3600000).toISOString().slice(0, 19) + '+03:00'
+      formatDate: (date, zone, format) => {
+        assert.equal(zone, 'Europe/Moscow');
+        const value = new Date(date.getTime() + 3 * 3600000).toISOString();
+        return format === 'yyyy-MM-dd' ? value.slice(0, 10) : format === 'HH:mm' ? value.slice(11, 16) : value.slice(0, 19) + '+03:00';
+      }
     },
     LockService: {
       getScriptLock: () => ({
@@ -164,4 +168,67 @@ test('reordered columns are mapped by name', () => {
   assert.equal(create(api).ok, true);
   assert.equal(api.rows[1][reversed.indexOf('studentId')], 1);
   assert.deepEqual(JSON.parse(api.rows[1][reversed.indexOf('qrPayload')]), example);
+});
+
+function readPasses(api, studentId = 1, className = '9А') {
+  return api.request({ action: 'studentPasses', studentId, className });
+}
+test('studentPasses is read-only and initially empty', () => {
+  const api = fixture();
+  assert.deepEqual(readPasses(api), { ok: true, passes: [] });
+  assert.equal(api.rows.length, 1);
+  assert.equal(api.releases, 0);
+});
+test('a new teacher pass appears with the exact stored UTF-8 payload and original ID', () => {
+  const api = fixture();
+  assert.equal(readPasses(api).passes.length, 0);
+  create(api);
+  // Preserve whitespace and Cyrillic byte-for-byte; never reserialize a QR.
+  const payload = JSON.stringify(example, null, 2);
+  api.rows[1][headers.indexOf('qrPayload')] = payload;
+  assert.deepEqual(readPasses(api), { ok: true, passes: [{ ...example, qrPayload: payload,
+    exitDate: '2026-11-27', exitTime: '14:30' }] });
+  assert.equal(api.rows.length, 2);
+  assert.equal(api.releases, 1);
+});
+test('ID AND class are required, never disclose another student pass', () => {
+  const api = fixture();
+  create(api);
+  create(api, { ...example, id: '8eeb7b42-0ef3-4ee5-bcbd-167ab1b144f3', studentId: 2, studentName: 'Васильева София' });
+  assert.equal(readPasses(api).passes.length, 1);
+  assert.equal(readPasses(api).passes[0].studentId, 1);
+  assert.equal(readPasses(api, 2).passes[0].studentId, 2);
+  for (const [id, name] of [[1, '9Ц'], ['1', '9А'], [999, '9А'], [1, '']]) {
+    const result = readPasses(api, id, name);
+    assert.equal(result.ok, false);
+    assert.equal(result.passes, undefined);
+  }
+});
+test('foreign and empty rows are ignored before parsing their payload', () => {
+  const api = fixture();
+  create(api);
+  const foreign = [...api.rows[1]];
+  foreign[headers.indexOf('studentId')] = 999;
+  foreign[headers.indexOf('qrPayload')] = 'invalid';
+  api.rows.push(foreign, Array(headers.length).fill(''));
+  assert.equal(readPasses(api).passes.length, 1);
+});
+test('a substituted QR identity or ID fails closed without returning data', () => {
+  for (const change of [{ studentId: 2 }, { className: '9Ц' }, { id: 'another-id' }]) {
+    const api = fixture(); create(api);
+    api.rows[1][headers.indexOf('qrPayload')] = JSON.stringify({ ...example, ...change });
+    const result = readPasses(api);
+    assert.equal(result.ok, false);
+    assert.equal(result.passes, undefined);
+  }
+});
+test('reading reordered columns preserves IDs and orders latest exit first', () => {
+  const api = fixture({ headers: [...headers].reverse() });
+  create(api);
+  const next = { ...example, id: '8eeb7b42-0ef3-4ee5-bcbd-167ab1b144f3', exitAt: '2026-11-28T09:15:00+03:00' };
+  create(api, next);
+  const result = readPasses(api);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.passes.map(pass => pass.id), [next.id, example.id]);
+  assert.equal(result.passes[0].exitTime, '09:15');
 });
