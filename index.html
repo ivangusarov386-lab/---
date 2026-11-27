@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#152b42">
+  <title>Контроль выхода · Проверка пропусков</title>
+  <link rel="stylesheet" href="reader/style.css">
+  <script src="vendor/jsQR-1.4.0.js" defer></script>
+  <script src="reader/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="./">Контроль выхода</a>
+    <span id="connection-status" class="connection" role="status">Подключаем таблицу…</span>
+  </header>
+  <main>
+    <div class="page-heading">
+      <h1>Проверка пропуска</h1>
+      <p>Сканируйте QR или найдите ученика по ФИО.</p>
+    </div>
+    <div class="workspace">
+      <section class="panel scanner-panel" aria-labelledby="scanner-heading">
+        <div class="panel-heading">
+          <h2 id="scanner-heading">Сканер QR</h2>
+          <span id="camera-state" class="muted">Камера выключена</span>
+        </div>
+        <div class="viewfinder">
+          <video id="camera" playsinline muted autoplay hidden aria-label="Изображение с камеры"></video>
+          <div id="camera-placeholder"><div class="scan-frame" aria-hidden="true"></div><p>Наведите камеру на QR-код пропуска</p></div>
+          <canvas id="scan-canvas" hidden></canvas>
+        </div>
+        <p id="camera-error" class="error-text" role="alert" hidden></p>
+        <div class="actions">
+          <button id="start-camera" class="primary" type="button">Включить камеру</button>
+          <button id="stop-camera" type="button" hidden>Остановить камеру</button>
+        </div>
+        <p class="hint">После успешной проверки QR пропуск погашается.</p>
+        <section id="result" class="result" aria-live="polite" hidden>
+          <h2 id="result-title" tabindex="-1"></h2>
+          <div id="result-body"></div>
+          <div class="actions">
+            <button id="retry-consume" type="button" hidden>Повторить отправку</button>
+            <button id="next-scan" type="button" hidden>Сканировать следующий</button>
+          </div>
+        </section>
+      </section>
+      <section class="panel search-panel" aria-labelledby="search-heading">
+        <h2 id="search-heading">Поиск по ФИО</h2>
+        <label for="name-query" class="muted">Фамилия, имя или отчество</label>
+        <input id="name-query" type="search" autocomplete="off" placeholder="Например, Александров Артём" maxlength="200">
+        <div class="search-status">
+          <p id="search-status" role="status">Загружаем действующие пропуска…</p>
+          <button id="refresh-search" class="text-button" type="button">Обновить</button>
+        </div>
+        <div id="search-results" class="search-results"></div>
+      </section>
+    </div>
+    <details class="settings">
+      <summary>Подключение</summary>
+      <form id="settings-form">
+        <label for="endpoint">Адрес Google Apps Script</label>
+        <input id="endpoint" type="url" required spellcheck="false">
+        <button type="submit">Подключить</button>
+      </form>
+      <a href="https://github.com/ivangusarov386-lab/---/blob/QR_reader/reader/README.md" target="_blank" rel="noopener">Настройка обработчика и запуск сайта</a>
+    </details>
+  </main>
+  <dialog id="manual-dialog" aria-labelledby="manual-title">
+    <h2 id="manual-title">Подтвердить выход</h2>
+    <div id="manual-details"></div>
+    <p class="hint">После подтверждения пропуск будет погашен.</p>
+    <div class="actions">
+      <button id="confirm-manual" class="primary" type="button">Погасить пропуск</button>
+      <button id="cancel-manual" type="button">Отмена</button>
+    </div>
+  </dialog>
+</body>
+</html>
