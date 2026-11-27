@@ -264,6 +264,8 @@ async function startCamera() {
     }
     stream = acquired;
     $('camera').srcObject = stream;
+    $('camera').hidden = false;
+    $('camera-placeholder').hidden = true;
     let playTimeout;
     try {
       await Promise.race([
@@ -278,8 +280,6 @@ async function startCamera() {
     if (generation !== cameraGeneration) return;
     cameraStarting = false;
     cameraActive = true;
-    $('camera').hidden = false;
-    $('camera-placeholder').hidden = true;
     $('camera-state').textContent = 'Камера включена';
     updateButtons();
     scanFrame(generation);
