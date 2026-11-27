@@ -27,7 +27,11 @@ function fixture(options = {}) {
   const rows = [options.headers || [...headers]];
   function sheet(values) {
     return {
-      getDataRange: () => ({ getValues: () => values }),
+      getDataRange: () => ({
+        getValues: () => values.map(row =>
+          Array.from({ length: values[0].length }, (_, column) => row[column] ?? '')
+        )
+      }),
       getLastRow: () => values.length,
       getSheetId: () => 123,
       deleteRow(rowNumber) {
@@ -35,13 +39,21 @@ function fixture(options = {}) {
         assert(rowNumber > 1);
         values.splice(rowNumber - 1, 1);
       },
-      getRange(row, column) {
+      getRange(row, column, count = 1, width = 1) {
         return {
           setValues(records) {
             assert(held, 'A write must hold the script lock');
-            values[row - 1] = records[0];
+            for (let r = 0; r < records.length; r++) {
+              values[row - 1 + r] ??= [];
+              for (let c = 0; c < records[r].length; c++) {
+                values[row - 1 + r][column - 1 + c] = records[r][c];
+              }
+            }
           },
-          getValues: () => [values[row - 1]],
+          getValues: () => Array.from({ length: count }, (_, r) =>
+            Array.from({ length: width }, (_, c) => values[row - 1 + r]?.[column - 1 + c] ?? '')
+          ),
+          getFormulas: () => Array.from({ length: count }, () => Array(width).fill('')),
           setNumberFormat() {}
         };
       }
@@ -110,6 +122,7 @@ function fixture(options = {}) {
   return {
     rows,
     triggers,
+    failNextFlush() { failFlush = true; },
     setNow(value) { now = Date.parse(value); },
     cleanup() { return JSON.parse(JSON.stringify(context.cleanupExpiredPasses())); },
     enableCleanup() { return JSON.parse(JSON.stringify(context.enablePassCleanup())); },
@@ -356,5 +369,94 @@ test('expiry after a late Moscow exit crosses midnight without a timezone shift'
   assert.equal(readPasses(api).passes.length, 1);
   api.setNow('2026-11-27T21:24:00.000Z');
   assert.equal(readPasses(api).passes.length, 0);
+  assert.equal(api.cleanup().deletedCount, 1);
+});
+
+
+const operation1 = 'bd84ad56-900c-4d30-90c3-dc5674993911';
+const operation2 = 'bd84ad56-900c-4d30-90c3-dc5674993912';
+function consume(api, options = {}) {
+  return api.request({ action: 'consumePass', passId: example.id, operationId: operation1, ...options });
+}
+
+test('reader search finds active passes by FIO with flexible order and ё/е matching', () => {
+  const api = fixture();
+  create(api);
+  const result = api.request({ action: 'searchPasses', query: 'АРТЕМ Александров' });
+  assert.equal(result.ok, true);
+  assert.equal(result.passes.length, 1);
+  assert.equal(result.passes[0].id, example.id);
+  assert.deepEqual(api.request({ action: 'searchPasses', query: 'Другой' }).passes, []);
+});
+
+test('scanning consumes one pass and immediately removes it from student and search results', () => {
+  const api = fixture();
+  create(api);
+  const qrPayload = JSON.stringify(example);
+  const result = consume(api, { qrPayload });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.pass, example);
+  assert.equal(result.consumption.operationId, operation1);
+  assert.equal(result.consumption.usedAt, '2026-11-27T11:00:00.000Z');
+  assert.equal(readPasses(api).passes.length, 0);
+  assert.equal(api.request({ action: 'searchPasses', query: '' }).passes.length, 0);
+  assert.equal(api.rows[1][headers.indexOf('qrPayload')], qrPayload);
+  assert.equal(create(api).code, 'PASS_USED');
+});
+
+test('another scan is rejected while a retry of the original operation confirms the same consumption', () => {
+  const api = fixture();
+  create(api);
+  const first = consume(api);
+  assert.equal(first.ok, true);
+  assert.deepEqual(consume(api), first);
+  assert.equal(consume(api, { operationId: operation2 }).code, 'PASS_USED');
+});
+
+test('a forged QR cannot consume the original pass', () => {
+  const api = fixture();
+  create(api);
+  assert.equal(consume(api, { qrPayload: JSON.stringify({ ...example, studentName: 'Other' }) }).code, 'PASS_MISMATCH');
+  assert.equal(consume(api, { qrPayload: 'https://example.com' }).code, 'PASS_MISMATCH');
+  assert.equal(readPasses(api).passes.length, 1);
+  assert.equal(api.rows[0].length, headers.length);
+});
+
+test('expired and missing passes are rejected by the reader', () => {
+  const api = fixture();
+  create(api);
+  api.setNow('2026-11-27T12:00:00Z');
+  assert.equal(consume(api).code, 'PASS_EXPIRED');
+  assert.equal(api.request({ action: 'searchPasses', query: '' }).passes.length, 0);
+  api.cleanup();
+  assert.equal(consume(api).code, 'PASS_NOT_FOUND');
+});
+
+test('manual consumption survives a lost acknowledgment and never grants a second operation', () => {
+  const api = fixture({ headers: [...headers, 'usedAt', 'useOperationId'] });
+  create(api);
+  api.failNextFlush();
+  assert.equal(consume(api).ok, false);
+  assert.equal(consume(api, { operationId: operation2 }).code, 'PASS_USED');
+  assert.equal(consume(api).ok, true);
+  assert.equal(readPasses(api).passes.length, 0);
+});
+
+test('the consumption lock prevents a busy request from changing the spreadsheet', () => {
+  const api = fixture({ busy: true });
+  api.rows.push([
+    example.id, example.studentId, example.studentName, example.className, '', '',
+    example.exitAt, example.timeZone, example.createdAt, example.version, example.type,
+    JSON.stringify(example)
+  ]);
+  assert.equal(consume(api).ok, false);
+  assert.equal(api.rows[0].length, headers.length);
+});
+
+test('consumed rows are still removed by the thirty minute cleanup', () => {
+  const api = fixture();
+  create(api);
+  assert.equal(consume(api).ok, true);
+  api.setNow('2026-11-27T12:00:00Z');
   assert.equal(api.cleanup().deletedCount, 1);
 });

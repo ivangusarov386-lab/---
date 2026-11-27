@@ -22,12 +22,19 @@ function doPost(event) {
       failPass_('Некорректный JSON.');
     }
     requirePass_(
-      request && (request.action === 'students' || request.action === 'createPass' || request.action === 'studentPasses'),
+      request && (request.action === 'students' || request.action === 'createPass' || request.action === 'studentPasses'
+        || request.action === 'searchPasses' || request.action === 'consumePass'),
       'Неизвестная операция.'
     );
     const book = SpreadsheetApp.openById(PASS_SPREADSHEET_ID);
     if (request.action === 'students') {
       return passResponse_({ ok: true, students: readStudents_(book) });
+    }
+    if (request.action === 'searchPasses') {
+      return passResponse_({ ok: true, passes: searchPasses_(book, request.query) });
+    }
+    if (request.action === 'consumePass') {
+      return passResponse_(Object.assign({ ok: true }, consumePass_(book, request)));
     }
     if (request.action === 'studentPasses') {
       const result = readStudentPasses_(book, request);
@@ -40,6 +47,7 @@ function doPost(event) {
   } catch (error) {
     return passResponse_({
       ok: false,
+      code: error.passCode || 'REQUEST_FAILED',
       error: error.passMessage || 'Ошибка обработчика. Проверьте доступ скрипта к таблице и названия листов.'
     });
   }
@@ -83,7 +91,7 @@ function readStudentPasses_(book, request) {
     try {
       const qrPayload = row[data.columns.qrPayload];
       const pass = readPassRow_(row, data.columns);
-      if (passExpiration_(pass) <= now) return;
+      if (row[data.columns.usedAt] || passExpiration_(pass) <= now) return;
       const record = {};
       QR_FIELDS.forEach(field => { record[field] = pass[field]; });
       record.qrPayload = qrPayload;
@@ -147,6 +155,7 @@ function savePass_(book, input) {
     const data = getSheetData_(book, 'Пропуска', PASS_FIELDS);
     const existing = data.rows.find(row => row[data.columns.id] === pass.id);
     if (existing) {
+      requirePass_(!existing[data.columns.usedAt], 'Пропуск уже использован. Создайте новый пропуск.', 'PASS_USED');
       let stored;
       try {
         stored = JSON.parse(existing[data.columns.qrPayload]);
@@ -184,6 +193,107 @@ function savePass_(book, input) {
       'Не удалось подтвердить запись строки. Повторите отправку с тем же ID.'
     );
     return pass;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+
+function searchPasses_(book, query) {
+  requirePass_(typeof query === 'string' && query.length <= 200, 'Укажите ФИО для поиска.');
+  const tokens = normalizePassName_(query).split(/\s+/).filter(Boolean);
+  const data = getSheetData_(book, 'Пропуска', PASS_FIELDS);
+  const now = Date.now();
+  const passes = [];
+  data.rows.forEach(row => {
+    if (row[data.columns.usedAt]) return;
+    let pass;
+    try {
+      pass = readPassRow_(row, data.columns);
+    } catch (error) {
+      return;
+    }
+    if (passExpiration_(pass) <= now) return;
+    const name = normalizePassName_(pass.studentName);
+    if (tokens.every(token => name.includes(token))) {
+      const result = {};
+      QR_FIELDS.forEach(field => { result[field] = pass[field]; });
+      passes.push(result);
+    }
+  });
+  return passes.sort((a, b) => a.studentName.localeCompare(b.studentName, 'ru')
+    || new Date(a.exitAt) - new Date(b.exitAt));
+}
+
+function normalizePassName_(name) {
+  return name.normalize('NFKC').toLowerCase().replace(/ё/g, 'е').trim();
+}
+
+function consumePass_(book, request) {
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  requirePass_(typeof request.operationId === 'string' && uuid.test(request.operationId),
+    'Некорректный ID операции.');
+  let scanned;
+  if (request.qrPayload !== undefined) {
+    requirePass_(typeof request.qrPayload === 'string' && request.qrPayload.length <= 10000,
+      'Некорректный QR-код.', 'PASS_MISMATCH');
+    try {
+      scanned = JSON.parse(request.qrPayload);
+    } catch (error) {
+      failPass_('Этот QR-код не является пропуском.', 'PASS_MISMATCH');
+    }
+    requirePass_(scanned && scanned.version === 1 && scanned.type === 'school-exit-pass',
+      'Этот QR-код не является пропуском.', 'PASS_MISMATCH');
+  }
+  const passId = scanned ? scanned.id : request.passId;
+  requirePass_(typeof passId === 'string' && uuid.test(passId), 'Некорректный ID пропуска.', 'PASS_MISMATCH');
+  requirePass_(!scanned || request.passId === undefined || request.passId === passId,
+    'Данные QR-кода не совпадают с пропуском.', 'PASS_MISMATCH');
+  const lock = LockService.getScriptLock();
+  requirePass_(lock.tryLock(10000), 'Проверка занята. Повторите отправку.');
+  try {
+    let data = getSheetData_(book, 'Пропуска', PASS_FIELDS);
+    const index = data.rows.findIndex(row => row[data.columns.id] === passId);
+    requirePass_(index >= 0, 'Пропуск не найден или уже удалён.', 'PASS_NOT_FOUND');
+    const pass = readPassRow_(data.rows[index], data.columns);
+    requirePass_(!scanned || QR_FIELDS.every(field => scanned[field] === pass[field]),
+      'Данные QR-кода не совпадают с выданным пропуском.', 'PASS_MISMATCH');
+    const current = data.rows[index];
+    if (current[data.columns.usedAt]) {
+      requirePass_(current[data.columns.useOperationId] === request.operationId,
+        'Пропуск уже использован. Повторный выход по нему запрещён.', 'PASS_USED');
+      return {
+        pass: pass,
+        consumption: { operationId: request.operationId, usedAt: current[data.columns.usedAt] }
+      };
+    }
+    requirePass_(passExpiration_(pass) > Date.now(), 'Срок действия пропуска истёк.', 'PASS_EXPIRED');
+
+    const missing = ['usedAt', 'useOperationId'].filter(field => data.columns[field] === undefined);
+    if (missing.length) {
+      data.sheet.getRange(1, data.headers.length + 1, 1, missing.length).setValues([missing]);
+      SpreadsheetApp.flush();
+      data = getSheetData_(book, 'Пропуска', PASS_FIELDS);
+    }
+    const rowNumber = index + 2;
+    const range = data.sheet.getRange(rowNumber, 1, 1, data.headers.length);
+    const formulas = range.getFormulas()[0];
+    const updated = data.rows[index].map((value, column) => formulas[column] || value);
+    data.sheet.getRange(rowNumber, data.columns.usedAt + 1).setNumberFormat('@');
+    data.sheet.getRange(rowNumber, data.columns.useOperationId + 1).setNumberFormat('@');
+    const decisionTime = Date.now();
+    requirePass_(passExpiration_(pass) > decisionTime, 'Срок действия пропуска истёк.', 'PASS_EXPIRED');
+    const usedAt = new Date(decisionTime).toISOString();
+    updated[data.columns.usedAt] = usedAt;
+    updated[data.columns.useOperationId] = request.operationId;
+    range.setValues([updated]);
+    SpreadsheetApp.flush();
+    const stored = range.getValues()[0];
+    requirePass_(stored[data.columns.id] === passId &&
+      stored[data.columns.usedAt] === usedAt &&
+      stored[data.columns.useOperationId] === request.operationId,
+      'Ответ о погашении не подтверждён. Повторите отправку с тем же ID операции.');
+    return { pass: pass, consumption: { operationId: request.operationId, usedAt: usedAt } };
   } finally {
     lock.releaseLock();
   }
@@ -275,12 +385,13 @@ function passResponse_(body) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
-function requirePass_(condition, message) {
-  if (!condition) failPass_(message);
+function requirePass_(condition, message, code) {
+  if (!condition) failPass_(message, code);
 }
 
-function failPass_(message) {
+function failPass_(message, code) {
   const error = new Error(message);
   error.passMessage = message;
+  error.passCode = code;
   throw error;
 }
