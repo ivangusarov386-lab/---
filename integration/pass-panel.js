@@ -9,7 +9,7 @@ let pendingExitPass = null;
 let passSending = false;
 
 function initializePasses() {
-  passStudents = P.map(p => ({ studentId: p.id + 1, studentName: p.name, className: '9А' }));
+  passStudents = P.map(p => ({ studentId: p.id + 1, studentName: p.name, className: SchoolCRM.teacherClass }));
   try {
     passConnection.endpoint = localStorage.getItem('school-pass-endpoint') || DEFAULT_PASS_ENDPOINT;
     sessionStorage.removeItem('school-pass-teacher-key');
@@ -94,7 +94,7 @@ async function requestPassApi(connection, action, pass) {
 
 async function connectPassTable(event) {
   if (event) event.preventDefault();
-  if (passConnecting) return;
+  if (!SchoolCRM.isTeacher() || passConnecting) return;
   const form = event?.target;
   const connection = {
     endpoint: form ? form.elements.endpoint.value.trim() : passConnection.endpoint
@@ -113,7 +113,7 @@ async function connectPassTable(event) {
       throw new Error('Проверьте список учеников в таблице.');
     }
     passConnection = connection;
-    passStudents = result.students;
+    passStudents = result.students.filter(p => p.className === SchoolCRM.teacherClass);
     passConnectionReady = true;
     try {
       localStorage.setItem('school-pass-endpoint', connection.endpoint);
@@ -130,6 +130,7 @@ async function connectPassTable(event) {
 }
 
 function openExitPass(studentId) {
+  if (!SchoolCRM.isTeacher() || page !== 'passes') return;
   if (!passConnectionReady) {
     $('pass-connection-status').textContent = passConnecting ? 'Дождитесь подключения к таблице.' : 'Проверьте подключение к таблице в настройках.';
     document.querySelector('.pass-settings input').focus();
@@ -162,7 +163,7 @@ function openExitPass(studentId) {
 async function createExitPass(event) {
   event.preventDefault();
   const form = event.target;
-  if (passSending || !form.reportValidity()) return;
+  if (!SchoolCRM.isTeacher() || page !== 'passes' || passSending || !form.reportValidity()) return;
   const pupil = passStudents.find(p => p.studentId === passPupilId);
   if (!pupil || !passConnectionReady) return;
   const exitAt = `${form.elements.exitDate.value}T${form.elements.exitTime.value}:00+03:00`;
