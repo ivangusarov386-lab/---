@@ -4,6 +4,8 @@ const PASS_FIELDS = [
   'id', 'studentId', 'studentName', 'className', 'exitDate', 'exitTime',
   'exitAt', 'timeZone', 'createdAt', 'version', 'type', 'qrPayload'
 ];
+const PASS_RETENTION_MS = 30 * 60 * 1000;
+
 const QR_FIELDS = [
   'version', 'type', 'id', 'studentId', 'studentName',
   'className', 'exitAt', 'timeZone', 'createdAt'
@@ -73,26 +75,15 @@ function readStudentPasses_(book, request) {
   const data = getSheetData_(book, 'Пропуска', PASS_FIELDS);
   const passes = [];
   const warnings = [];
+  const now = Date.now();
   data.rows.forEach((row, index) => {
     if (Number(row[data.columns.studentId]) !== student.studentId
       || String(row[data.columns.className]).trim() !== student.className) return;
     const rowNumber = index + 2;
     try {
       const qrPayload = row[data.columns.qrPayload];
-      let pass;
-      try {
-        pass = JSON.parse(qrPayload);
-      } catch (error) {
-        failPass_('Повреждён или не заполнен QR-код.');
-      }
-      requirePass_(typeof qrPayload === 'string' && pass && pass.version === 1
-        && pass.type === 'school-exit-pass' && typeof pass.id === 'string'
-        && pass.id === row[data.columns.id] && pass.studentId === student.studentId
-        && pass.className === student.className && typeof pass.studentName === 'string'
-        && pass.studentName === row[data.columns.studentName]
-        && pass.timeZone === 'Europe/Moscow' && typeof pass.exitAt === 'string'
-        && Number.isFinite(new Date(pass.exitAt).getTime()),
-        'Данные строки не совпадают с QR-кодом.');
+      const pass = readPassRow_(row, data.columns);
+      if (passExpiration_(pass) <= now) return;
       const record = {};
       QR_FIELDS.forEach(field => { record[field] = pass[field]; });
       record.qrPayload = qrPayload;
@@ -144,6 +135,7 @@ function savePass_(book, input) {
   const lock = LockService.getScriptLock();
   requirePass_(lock.tryLock(10000), 'Таблица занята. Повторите отправку.');
   try {
+    requirePass_(passExpiration_(input) > Date.now(), 'Срок действия пропуска истёк. Выберите другое время выхода.');
     const student = readStudents_(book).find(row => row.studentId === input.studentId);
     requirePass_(student, 'Ученик с таким ID отсутствует в таблице.');
     requirePass_(
@@ -195,6 +187,73 @@ function savePass_(book, input) {
   } finally {
     lock.releaseLock();
   }
+}
+
+// Run once as the spreadsheet owner to enable cleanup while the sites are closed.
+function enablePassCleanup() {
+  const lock = LockService.getScriptLock();
+  requirePass_(lock.tryLock(10000), 'Таблица занята. Повторите включение очистки.');
+  try {
+    const installed = ScriptApp.getProjectTriggers().some(trigger =>
+      trigger.getHandlerFunction() === 'cleanupExpiredPasses'
+    );
+    if (!installed) {
+      ScriptApp.newTrigger('cleanupExpiredPasses').timeBased().everyMinutes(1).create();
+    }
+  } finally {
+    lock.releaseLock();
+  }
+  return cleanupExpiredPasses();
+}
+
+function cleanupExpiredPasses() {
+  const lock = LockService.getScriptLock();
+  requirePass_(lock.tryLock(10000), 'Таблица занята. Очистка повторится при следующем запуске.');
+  try {
+    const book = SpreadsheetApp.openById(PASS_SPREADSHEET_ID);
+    const data = getSheetData_(book, 'Пропуска', PASS_FIELDS);
+    const now = Date.now();
+    const expiredRows = [];
+    data.rows.forEach((row, index) => {
+      let pass;
+      try {
+        pass = readPassRow_(row, data.columns);
+      } catch (error) {
+        // Incomplete rows are reported by studentPasses and require manual correction.
+        return;
+      }
+      if (passExpiration_(pass) <= now) expiredRows.push(index + 2);
+    });
+    // Delete from the bottom so earlier row numbers remain valid.
+    expiredRows.reverse().forEach(rowNumber => data.sheet.deleteRow(rowNumber));
+    SpreadsheetApp.flush();
+    return { deletedCount: expiredRows.length };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function passExpiration_(pass) {
+  return new Date(pass.exitAt).getTime() + PASS_RETENTION_MS;
+}
+
+function readPassRow_(row, columns) {
+  const qrPayload = row[columns.qrPayload];
+  let pass;
+  try {
+    pass = JSON.parse(qrPayload);
+  } catch (error) {
+    failPass_('Повреждён или не заполнен QR-код.');
+  }
+  requirePass_(typeof qrPayload === 'string' && pass && pass.version === 1
+    && pass.type === 'school-exit-pass' && typeof pass.id === 'string'
+    && pass.id === row[columns.id] && pass.studentId === Number(row[columns.studentId])
+    && pass.className === String(row[columns.className]).trim()
+    && typeof pass.studentName === 'string' && pass.studentName === row[columns.studentName]
+    && pass.timeZone === 'Europe/Moscow' && typeof pass.exitAt === 'string'
+    && Number.isFinite(new Date(pass.exitAt).getTime()),
+    'Данные строки не совпадают с QR-кодом.');
+  return pass;
 }
 
 function getSheetData_(book, name, requiredFields) {

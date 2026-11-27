@@ -22,12 +22,19 @@ function fixture(options = {}) {
   let releases = 0;
   let opens = 0;
   let failFlush = options.failFlush;
+  let now = Date.parse('2026-11-27T11:00:00.000Z');
+  const triggers = [];
   const rows = [options.headers || [...headers]];
   function sheet(values) {
     return {
       getDataRange: () => ({ getValues: () => values }),
       getLastRow: () => values.length,
       getSheetId: () => 123,
+      deleteRow(rowNumber) {
+        assert(held);
+        assert(rowNumber > 1);
+        values.splice(rowNumber - 1, 1);
+      },
       getRange(row, column) {
         return {
           setValues(records) {
@@ -53,7 +60,23 @@ function fixture(options = {}) {
       return null;
     }
   };
+  class TestDate extends Date {
+    static now() { return now; }
+  }
   const context = vm.createContext({
+    Date: TestDate,
+    ScriptApp: {
+      getProjectTriggers: () => triggers,
+      newTrigger: handler => ({
+        timeBased() { return this; },
+        everyMinutes(minutes) { assert.equal(minutes, 1); return this; },
+        create() {
+          const trigger = { getHandlerFunction: () => handler };
+          triggers.push(trigger);
+          return trigger;
+        }
+      })
+    },
     SpreadsheetApp: {
       openById: () => { opens++; return book; },
       flush: () => {
@@ -86,6 +109,10 @@ function fixture(options = {}) {
   vm.runInContext(source, context);
   return {
     rows,
+    triggers,
+    setNow(value) { now = Date.parse(value); },
+    cleanup() { return JSON.parse(JSON.stringify(context.cleanupExpiredPasses())); },
+    enableCleanup() { return JSON.parse(JSON.stringify(context.enablePassCleanup())); },
     get releases() { return releases; },
     get opens() { return opens; },
     request(body) {
@@ -266,4 +293,68 @@ test('a cleared old row does not hide a newly issued pass for the same pupil', (
   assert.equal(result.passes[0].rowNumber, 3);
   assert.equal(result.passes[0].exitTime, '23:54');
   assert.equal(result.warnings[0].rowNumber, 2);
+});
+
+
+test('expiry starts at the scheduled exit and is enforced exactly thirty minutes later', () => {
+  const api = fixture();
+  create(api);
+  api.setNow('2026-11-27T11:59:59.999Z');
+  assert.equal(readPasses(api).passes.length, 1);
+  assert.equal(api.cleanup().deletedCount, 0);
+  api.setNow('2026-11-27T12:00:00.000Z');
+  assert.deepEqual(readPasses(api), { ok: true, passes: [] });
+  assert.equal(api.rows.length, 2, 'Read filtering works before a timer tick');
+  assert.equal(api.cleanup().deletedCount, 1);
+  assert.equal(api.rows.length, 1);
+  assert.deepEqual(api.rows[0], headers);
+  assert.equal(api.cleanup().deletedCount, 0);
+});
+
+test('background cleanup deletes adjacent expired rows from the bottom and retains future and incomplete rows', () => {
+  const api = fixture();
+  create(api);
+  create(api, { ...example, id: '8eeb7b42-0ef3-4ee5-bcbd-167ab1b144f3',
+    studentId: 2, studentName: 'Васильева София' });
+  const future = { ...example, id: '8eeb7b42-0ef3-4ee5-bcbd-167ab1b144f4',
+    exitAt: '2026-11-28T14:30:00+03:00' };
+  create(api, future);
+  const incomplete = Array(headers.length).fill('');
+  incomplete[0] = 'incomplete';
+  api.rows.push(incomplete);
+  api.setNow('2026-11-27T12:00:00.000Z');
+  assert.equal(api.cleanup().deletedCount, 2);
+  assert.equal(api.rows.length, 3);
+  assert.equal(api.rows[1][0], future.id);
+  assert.equal(api.rows[2][0], 'incomplete');
+});
+
+test('expired passes cannot be issued again or resurrected by a retry', () => {
+  const api = fixture();
+  create(api);
+  api.setNow('2026-11-27T12:00:00.000Z');
+  assert.equal(create(api).ok, false);
+  api.cleanup();
+  assert.equal(create(api).ok, false);
+  assert.equal(api.rows.length, 1);
+});
+
+test('enabling cleanup repeatedly creates one minute trigger and immediately cleans old passes', () => {
+  const api = fixture();
+  create(api);
+  api.setNow('2026-11-27T12:00:00.000Z');
+  assert.equal(api.enableCleanup().deletedCount, 1);
+  assert.equal(api.enableCleanup().deletedCount, 0);
+  assert.equal(api.triggers.length, 1);
+  assert.equal(api.triggers[0].getHandlerFunction(), 'cleanupExpiredPasses');
+});
+
+test('expiry after a late Moscow exit crosses midnight without a timezone shift', () => {
+  const api = fixture();
+  create(api, { ...example, exitAt: '2026-11-27T23:54:00+03:00' });
+  api.setNow('2026-11-27T21:23:59.999Z');
+  assert.equal(readPasses(api).passes.length, 1);
+  api.setNow('2026-11-27T21:24:00.000Z');
+  assert.equal(readPasses(api).passes.length, 0);
+  assert.equal(api.cleanup().deletedCount, 1);
 });
