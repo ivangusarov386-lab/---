@@ -28,12 +28,14 @@ const SchoolCRM = (() => {
     classes: "Классы и педагоги",
     schedule: "Расписание",
     chat: "Сообщения",
-    tasks: "Задачи",
-    calendar: "Календарь школы",
+    assignments: "Поручения школы",
+    schoolCalendar: "Календарь школы",
     requests: "Обращения",
     admin: "Настройки",
   };
   const teacherPages = new Set([
+    "tasks",
+    "calendar",
     "students",
     "social",
     "digital",
@@ -166,13 +168,13 @@ const SchoolCRM = (() => {
     let h = "";
     if (page === "home") {
       h =
-        `<h2>${manager() ? "Управление школой" : role === "admin" ? "Администрирование" : "Мой рабочий день"}</h2><div class="grid">${[
-          ["Задачи", visibleTasks().length],
+        `<div class="grid">${[
+          ["Поручения школы", visibleTasks().length],
           ["Сообщения", state.messages.filter((m) => m.to === me()).length],
           ["Классы", classes.length],
           ["Мероприятия", state.events.length],
         ]
-          .map(([a, b]) => card(a, `<div class="num">${b}</div>`))
+          .map(([a, b]) => card(a, `<strong class="metric">${b}</strong>`))
           .join("")}</div>` +
         card(
           "Быстрый доступ",
@@ -180,7 +182,7 @@ const SchoolCRM = (() => {
             " " +
             btn("Моё расписание", "SchoolCRM.go('schedule')") +
             " " +
-            btn("Мои задачи", "SchoolCRM.go('tasks')"),
+            btn("Поручения школы", "SchoolCRM.go('assignments')"),
         ) +
         card(
           "Требует внимания",
@@ -253,7 +255,7 @@ const SchoolCRM = (() => {
         );
       }
     }
-    if (page === "tasks") {
+    if (page === "assignments") {
       h = "";
       if (manager())
         h += card(
@@ -271,7 +273,7 @@ const SchoolCRM = (() => {
         })
         .join("");
     }
-    if (page === "calendar") {
+    if (page === "schoolCalendar") {
       h =
         (manager()
           ? card(
@@ -414,7 +416,7 @@ const SchoolCRM = (() => {
       .join("");
   }
   function createTask() {
-    if (!manager() || page !== "tasks" || !$("tt")) return;
+    if (!manager() || page !== "assignments" || !$("tt")) return;
     let title = $("tt").value.trim(),
       a = $("aud").value,
       sel = [...$("targets").querySelectorAll("input:checked")].map(
@@ -449,7 +451,7 @@ const SchoolCRM = (() => {
     const task = state.tasks[i];
     const target = task?.targets[targetIndex];
     if (
-      page !== "tasks" ||
+      page !== "assignments" ||
       manager() ||
       !task ||
       !mine(task).includes(target) ||
@@ -462,7 +464,7 @@ const SchoolCRM = (() => {
   }
   function comment(i) {
     if (
-      page !== "tasks" ||
+      page !== "assignments" ||
       !visibleTasks().includes(state.tasks[i]) ||
       !$("comment" + i)
     )
@@ -473,7 +475,7 @@ const SchoolCRM = (() => {
     render();
   }
   function eventAdd() {
-    if (!manager() || page !== "calendar" || !$("et")) return;
+    if (!manager() || page !== "schoolCalendar" || !$("et")) return;
     const title = $("et").value.trim();
     if (!title || !$("ed").value) return;
     state.events.push({
